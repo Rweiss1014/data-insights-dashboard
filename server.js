@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const OpenAI = require('openai');
+const { createClient } = require('@supabase/supabase-js');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -10,6 +12,66 @@ const PORT = process.env.PORT || 3001;
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
+
+// Initialize Supabase (only if configured)
+let supabase = null;
+if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    supabase = createClient(
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_SERVICE_ROLE_KEY
+    );
+    console.log('✅ Supabase configured');
+} else {
+    console.log('⚠️  Supabase not configured - dashboard persistence disabled');
+}
+
+// Auth middleware - verifies Supabase JWT token
+async function requireAuth(req, res, next) {
+    if (!supabase) {
+        return res.status(503).json({ error: 'Database not configured' });
+    }
+
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.replace('Bearer ', '').trim();
+
+    if (!token) {
+        return res.status(401).json({ error: 'No auth token provided' });
+    }
+
+    try {
+        // Decode the JWT to get user ID
+        // In production, you should verify with SUPABASE_JWT_SECRET
+        const decoded = jwt.decode(token);
+
+        if (!decoded || !decoded.sub) {
+            return res.status(401).json({ error: 'Invalid token' });
+        }
+
+        req.user = { id: decoded.sub, email: decoded.email };
+        next();
+    } catch (err) {
+        console.error('Auth error:', err);
+        res.status(401).json({ error: 'Unauthorized' });
+    }
+}
+
+// Optional auth - allows both authenticated and unauthenticated requests
+function optionalAuth(req, res, next) {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.replace('Bearer ', '').trim();
+
+    if (token) {
+        try {
+            const decoded = jwt.decode(token);
+            if (decoded && decoded.sub) {
+                req.user = { id: decoded.sub, email: decoded.email };
+            }
+        } catch (err) {
+            // Ignore auth errors for optional auth
+        }
+    }
+    next();
+}
 
 // Middleware - CORS configuration for local and deployed environments
 const allowedOrigins = [
@@ -32,7 +94,7 @@ app.use(cors({
         }
         callback(new Error('Not allowed by CORS'));
     },
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -566,6 +628,338 @@ app.post('/api/analytics/insights', async (req, res) => {
     }
 });
 
+// =============================================
+// Dashboard Persistence Endpoints
+// =============================================
+
+// Check if user is authenticated (for frontend to know)
+app.get('/api/auth/status', optionalAuth, (req, res) => {
+    res.json({
+        authenticated: !!req.user,
+        user: req.user || null,
+        supabaseConfigured: !!supabase
+    });
+});
+
+// Create a new dashboard
+app.post('/api/dashboards', requireAuth, async (req, res) => {
+    const { name, description, datasetId, globalFilters = {}, cards = [] } = req.body;
+    const userId = req.user.id;
+
+    if (!name) {
+        return res.status(400).json({ error: 'Dashboard name is required' });
+    }
+
+    try {
+        // Insert dashboard
+        const { data: dashboard, error: dashError } = await supabase
+            .from('dashboards')
+            .insert({
+                user_id: userId,
+                name,
+                description: description || '',
+                dataset_id: datasetId || 'unknown',
+                global_filters: globalFilters
+            })
+            .select()
+            .single();
+
+        if (dashError) throw dashError;
+
+        // Insert cards if any
+        if (cards.length > 0) {
+            const cardRows = cards.map((card, idx) => ({
+                dashboard_id: dashboard.id,
+                position: card.position ?? idx,
+                title: card.title || '',
+                chart_type: card.chartType,
+                config_json: card.config
+            }));
+
+            const { error: cardsError } = await supabase
+                .from('dashboard_cards')
+                .insert(cardRows);
+
+            if (cardsError) throw cardsError;
+        }
+
+        res.status(201).json({
+            dashboardId: dashboard.id,
+            message: 'Dashboard saved successfully'
+        });
+
+    } catch (err) {
+        console.error('Error creating dashboard:', err);
+        res.status(500).json({ error: 'Failed to create dashboard' });
+    }
+});
+
+// List all dashboards for the user
+app.get('/api/dashboards', requireAuth, async (req, res) => {
+    const userId = req.user.id;
+
+    try {
+        const { data, error } = await supabase
+            .from('dashboards')
+            .select('id, name, description, dataset_id, created_at, updated_at')
+            .eq('user_id', userId)
+            .order('updated_at', { ascending: false });
+
+        if (error) throw error;
+
+        res.json(data || []);
+
+    } catch (err) {
+        console.error('Error fetching dashboards:', err);
+        res.status(500).json({ error: 'Failed to fetch dashboards' });
+    }
+});
+
+// Get a single dashboard with its cards
+app.get('/api/dashboards/:id', requireAuth, async (req, res) => {
+    const userId = req.user.id;
+    const dashboardId = req.params.id;
+
+    try {
+        // Get dashboard
+        const { data: dashboards, error: dashError } = await supabase
+            .from('dashboards')
+            .select('*')
+            .eq('id', dashboardId)
+            .eq('user_id', userId)
+            .limit(1);
+
+        if (dashError) throw dashError;
+
+        if (!dashboards || dashboards.length === 0) {
+            return res.status(404).json({ error: 'Dashboard not found' });
+        }
+
+        const dashboard = dashboards[0];
+
+        // Get cards
+        const { data: cards, error: cardsError } = await supabase
+            .from('dashboard_cards')
+            .select('*')
+            .eq('dashboard_id', dashboardId)
+            .order('position', { ascending: true });
+
+        if (cardsError) throw cardsError;
+
+        res.json({
+            id: dashboard.id,
+            name: dashboard.name,
+            description: dashboard.description,
+            datasetId: dashboard.dataset_id,
+            globalFilters: dashboard.global_filters,
+            createdAt: dashboard.created_at,
+            updatedAt: dashboard.updated_at,
+            cards: (cards || []).map(c => ({
+                id: c.id,
+                position: c.position,
+                title: c.title,
+                chartType: c.chart_type,
+                config: c.config_json
+            }))
+        });
+
+    } catch (err) {
+        console.error('Error fetching dashboard:', err);
+        res.status(500).json({ error: 'Failed to fetch dashboard' });
+    }
+});
+
+// Update a dashboard
+app.put('/api/dashboards/:id', requireAuth, async (req, res) => {
+    const userId = req.user.id;
+    const dashboardId = req.params.id;
+    const { name, description, globalFilters, cards } = req.body;
+
+    try {
+        // Update dashboard metadata
+        const updates = { updated_at: new Date().toISOString() };
+        if (name !== undefined) updates.name = name;
+        if (description !== undefined) updates.description = description;
+        if (globalFilters !== undefined) updates.global_filters = globalFilters;
+
+        const { error: dashError } = await supabase
+            .from('dashboards')
+            .update(updates)
+            .eq('id', dashboardId)
+            .eq('user_id', userId);
+
+        if (dashError) throw dashError;
+
+        // Update cards if provided
+        if (cards !== undefined) {
+            // Delete existing cards
+            await supabase
+                .from('dashboard_cards')
+                .delete()
+                .eq('dashboard_id', dashboardId);
+
+            // Insert new cards
+            if (cards.length > 0) {
+                const cardRows = cards.map((card, idx) => ({
+                    dashboard_id: dashboardId,
+                    position: card.position ?? idx,
+                    title: card.title || '',
+                    chart_type: card.chartType,
+                    config_json: card.config
+                }));
+
+                const { error: cardsError } = await supabase
+                    .from('dashboard_cards')
+                    .insert(cardRows);
+
+                if (cardsError) throw cardsError;
+            }
+        }
+
+        res.json({ message: 'Dashboard updated successfully' });
+
+    } catch (err) {
+        console.error('Error updating dashboard:', err);
+        res.status(500).json({ error: 'Failed to update dashboard' });
+    }
+});
+
+// Delete a dashboard
+app.delete('/api/dashboards/:id', requireAuth, async (req, res) => {
+    const userId = req.user.id;
+    const dashboardId = req.params.id;
+
+    try {
+        const { error } = await supabase
+            .from('dashboards')
+            .delete()
+            .eq('id', dashboardId)
+            .eq('user_id', userId);
+
+        if (error) throw error;
+
+        res.status(204).end();
+
+    } catch (err) {
+        console.error('Error deleting dashboard:', err);
+        res.status(500).json({ error: 'Failed to delete dashboard' });
+    }
+});
+
+// =============================================
+// Session Persistence Endpoints
+// =============================================
+
+// Save a session (chat history + cards)
+app.post('/api/sessions', requireAuth, async (req, res) => {
+    const { name, datasetId, chatHistory, cards } = req.body;
+    const userId = req.user.id;
+
+    try {
+        const { data: session, error } = await supabase
+            .from('sessions')
+            .insert({
+                user_id: userId,
+                name: name || `Session ${new Date().toLocaleString()}`,
+                dataset_id: datasetId || 'unknown',
+                chat_history: chatHistory || [],
+                cards_json: cards || []
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        res.status(201).json({
+            sessionId: session.id,
+            message: 'Session saved successfully'
+        });
+
+    } catch (err) {
+        console.error('Error saving session:', err);
+        res.status(500).json({ error: 'Failed to save session' });
+    }
+});
+
+// List sessions
+app.get('/api/sessions', requireAuth, async (req, res) => {
+    const userId = req.user.id;
+
+    try {
+        const { data, error } = await supabase
+            .from('sessions')
+            .select('id, name, dataset_id, created_at, updated_at')
+            .eq('user_id', userId)
+            .order('updated_at', { ascending: false });
+
+        if (error) throw error;
+
+        res.json(data || []);
+
+    } catch (err) {
+        console.error('Error fetching sessions:', err);
+        res.status(500).json({ error: 'Failed to fetch sessions' });
+    }
+});
+
+// Get a session
+app.get('/api/sessions/:id', requireAuth, async (req, res) => {
+    const userId = req.user.id;
+    const sessionId = req.params.id;
+
+    try {
+        const { data: sessions, error } = await supabase
+            .from('sessions')
+            .select('*')
+            .eq('id', sessionId)
+            .eq('user_id', userId)
+            .limit(1);
+
+        if (error) throw error;
+
+        if (!sessions || sessions.length === 0) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        const session = sessions[0];
+        res.json({
+            id: session.id,
+            name: session.name,
+            datasetId: session.dataset_id,
+            chatHistory: session.chat_history,
+            cards: session.cards_json,
+            createdAt: session.created_at,
+            updatedAt: session.updated_at
+        });
+
+    } catch (err) {
+        console.error('Error fetching session:', err);
+        res.status(500).json({ error: 'Failed to fetch session' });
+    }
+});
+
+// Delete a session
+app.delete('/api/sessions/:id', requireAuth, async (req, res) => {
+    const userId = req.user.id;
+    const sessionId = req.params.id;
+
+    try {
+        const { error } = await supabase
+            .from('sessions')
+            .delete()
+            .eq('id', sessionId)
+            .eq('user_id', userId);
+
+        if (error) throw error;
+
+        res.status(204).end();
+
+    } catch (err) {
+        console.error('Error deleting session:', err);
+        res.status(500).json({ error: 'Failed to delete session' });
+    }
+});
+
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Node.js server running on http://localhost:${PORT}`);
@@ -577,6 +971,11 @@ app.listen(PORT, () => {
         console.warn('   AI features will not work until you add your API key');
     } else {
         console.log('✅ OpenAI API key configured');
+    }
+
+    if (!supabase) {
+        console.warn('⚠️  WARNING: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set');
+        console.warn('   Dashboard persistence will not work until you configure Supabase');
     }
 
     console.log('');

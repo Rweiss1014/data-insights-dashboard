@@ -8,6 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
@@ -23,8 +24,20 @@
                 <div id="ai-status" class="text-sm text-gray-600">
                     <span id="ai-status-text">AI: Not configured</span>
                 </div>
+                <!-- My Dashboards button (shown when logged in) -->
+                <button id="my-dashboards-btn" class="hidden px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 rounded text-sm font-semibold text-white transition">
+                    📁 My Dashboards
+                </button>
+                <!-- Save Dashboard button (shown when logged in and has charts) -->
+                <button id="save-dashboard-btn" class="hidden px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-sm font-semibold text-white transition">
+                    💾 Save
+                </button>
                 <button id="presentation-mode-btn" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 rounded text-sm font-semibold text-white transition">Present</button>
                 <button id="settings-btn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 rounded text-sm font-semibold text-gray-700 transition">⚙️ Settings</button>
+                <!-- Auth button -->
+                <button id="auth-btn" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-900 rounded text-sm font-semibold text-white transition">
+                    Sign In
+                </button>
                 <button id="help-btn" class="w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-gray-700 font-semibold transition">?</button>
             </div>
         </div>
@@ -330,6 +343,91 @@
         </div>
     </div>
 
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-8">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-xl font-bold text-gray-800">Sign In</h3>
+                <button id="close-auth" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+            </div>
+            <div id="auth-form-container">
+                <p class="text-sm text-gray-600 mb-4">Sign in to save and load your dashboards.</p>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                        <input type="email" id="auth-email" placeholder="your@email.com" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200">
+                    </div>
+                    <button id="auth-send-magic-link" class="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition">
+                        Send Magic Link
+                    </button>
+                </div>
+                <div id="auth-message" class="hidden mt-4 p-3 rounded-lg text-sm"></div>
+            </div>
+            <div id="auth-logged-in" class="hidden">
+                <div class="text-center">
+                    <div class="w-16 h-16 mx-auto mb-4 bg-emerald-100 rounded-full flex items-center justify-center">
+                        <svg class="w-8 h-8 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                    </div>
+                    <p class="text-gray-800 font-semibold mb-1">You're signed in!</p>
+                    <p id="auth-user-email" class="text-sm text-gray-600 mb-4"></p>
+                    <button id="auth-sign-out" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition">
+                        Sign Out
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- My Dashboards Modal -->
+    <div id="dashboards-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col">
+            <div class="flex items-center justify-between p-6 border-b border-gray-200">
+                <h3 class="text-xl font-bold text-gray-800">My Dashboards</h3>
+                <button id="close-dashboards" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+            </div>
+            <div id="dashboards-list" class="flex-1 overflow-y-auto p-6">
+                <div id="dashboards-loading" class="text-center py-8 text-gray-500">
+                    Loading your dashboards...
+                </div>
+                <div id="dashboards-empty" class="hidden text-center py-8">
+                    <p class="text-gray-500 mb-2">No saved dashboards yet.</p>
+                    <p class="text-sm text-gray-400">Create charts and click "Save" to save your dashboard.</p>
+                </div>
+                <div id="dashboards-items" class="hidden space-y-3">
+                    <!-- Dashboard items will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save Dashboard Modal -->
+    <div id="save-dashboard-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-8">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-xl font-bold text-gray-800">Save Dashboard</h3>
+                <button id="close-save-dashboard" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Dashboard Name</label>
+                    <input type="text" id="save-dashboard-name" placeholder="e.g., Q1 Sales Overview" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Description (optional)</label>
+                    <textarea id="save-dashboard-description" rows="2" placeholder="What's this dashboard about?" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200"></textarea>
+                </div>
+                <div id="save-dashboard-info" class="text-sm text-gray-500">
+                    <!-- Will show chart count and dataset info -->
+                </div>
+                <button id="save-dashboard-confirm" class="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition">
+                    Save Dashboard
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Help Modal -->
     <div id="help-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 p-8">
@@ -369,6 +467,7 @@
     <!-- Load our scripts -->
     <script src="script.js"></script>
     <script src="analytics_handlers.js"></script>
+    <script src="auth.js"></script>
 
 </body>
 </html>
