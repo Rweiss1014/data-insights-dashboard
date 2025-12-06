@@ -1136,10 +1136,80 @@ function parseNumericValue(val) {
     return parseFloat(cleaned);
 }
 
+// Chronological sort for months, quarters, and dates
+function sortChronologically(values, fieldName) {
+    const monthOrder = {
+        'january': 0, 'jan': 0,
+        'february': 1, 'feb': 1,
+        'march': 2, 'mar': 2,
+        'april': 3, 'apr': 3,
+        'may': 4,
+        'june': 5, 'jun': 5,
+        'july': 6, 'jul': 6,
+        'august': 7, 'aug': 7,
+        'september': 8, 'sep': 8, 'sept': 8,
+        'october': 9, 'oct': 9,
+        'november': 10, 'nov': 10,
+        'december': 11, 'dec': 11
+    };
+
+    const quarterOrder = { 'q1': 0, 'q2': 1, 'q3': 2, 'q4': 3 };
+
+    // Check if values look like months
+    const isMonthField = /month/i.test(fieldName) ||
+        values.some(v => monthOrder[String(v).toLowerCase()] !== undefined);
+
+    // Check if values look like quarters
+    const isQuarterField = /quarter/i.test(fieldName) ||
+        values.some(v => quarterOrder[String(v).toLowerCase()] !== undefined);
+
+    // Check if values look like dates (YYYY-MM-DD, MM/DD/YYYY, etc.)
+    const isDateField = /date/i.test(fieldName) ||
+        values.some(v => !isNaN(Date.parse(v)));
+
+    if (isMonthField) {
+        return [...values].sort((a, b) => {
+            const aLower = String(a).toLowerCase();
+            const bLower = String(b).toLowerCase();
+            const aOrder = monthOrder[aLower] ?? 99;
+            const bOrder = monthOrder[bLower] ?? 99;
+            return aOrder - bOrder;
+        });
+    }
+
+    if (isQuarterField) {
+        return [...values].sort((a, b) => {
+            const aLower = String(a).toLowerCase();
+            const bLower = String(b).toLowerCase();
+            const aOrder = quarterOrder[aLower] ?? 99;
+            const bOrder = quarterOrder[bLower] ?? 99;
+            return aOrder - bOrder;
+        });
+    }
+
+    if (isDateField) {
+        return [...values].sort((a, b) => {
+            const aDate = new Date(a);
+            const bDate = new Date(b);
+            if (!isNaN(aDate) && !isNaN(bDate)) {
+                return aDate - bDate;
+            }
+            return String(a).localeCompare(String(b));
+        });
+    }
+
+    // Default alphabetical sort
+    return [...values].sort((a, b) => String(a).localeCompare(String(b)));
+}
+
 // Pivot function
 function pivot(data, rowField, colField, valueField, aggType) {
-    const rowKeys = [...new Set(data.map(row => row[rowField]))].filter(v => v != null).sort();
-    const colKeys = colField ? [...new Set(data.map(row => row[colField]))].filter(v => v != null).sort() : [null];
+    const rawRowKeys = [...new Set(data.map(row => row[rowField]))].filter(v => v != null);
+    const rawColKeys = colField ? [...new Set(data.map(row => row[colField]))].filter(v => v != null) : [null];
+
+    // Sort with chronological awareness for months/dates
+    const rowKeys = sortChronologically(rawRowKeys, rowField);
+    const colKeys = colField ? sortChronologically(rawColKeys, colField) : [null];
 
     const aggMap = {};
 
@@ -1261,20 +1331,59 @@ function renderChart(pivotResult, config) {
 // Prepare chart data for Chart.js with polished styling
 function prepareChartData(pivotResult, config) {
     const { rowKeys, colKeys, getValue } = pivotResult;
-    const { chartType, colField } = config;
+    const { chartType, colField, showLabels } = config;
+
+    // Guard against empty/invalid data
+    if (!rowKeys || rowKeys.length === 0) {
+        console.warn('[prepareChartData] No row keys - returning empty chart placeholder');
+        return {
+            type: chartType === 'pie' || chartType === 'doughnut' ? 'pie' : 'bar',
+            data: {
+                labels: ['No data'],
+                datasets: [{
+                    data: chartType === 'pie' || chartType === 'doughnut' ? [1] : [0],
+                    backgroundColor: ['#e5e7eb']
+                }]
+            },
+            options: {
+                plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                scales: chartType === 'pie' || chartType === 'doughnut' ? {} : { y: { display: false }, x: { display: true } }
+            }
+        };
+    }
 
     // Muted, sophisticated color palette
     const palette = getMutedPalette();
 
-    if (chartType === 'pie') {
-        const data = rowKeys.map(rk => getValue(rk, colKeys[0]));
+    // Pie or Doughnut chart
+    if (chartType === 'pie' || chartType === 'doughnut') {
+        // Get data and filter out null/zero values (they cause pie chart rendering issues)
+        const rawData = rowKeys.map((rk, idx) => ({ label: rk, value: getValue(rk, colKeys[0]), idx }));
+        const validData = rawData.filter(d => d.value != null && d.value > 0);
+
+        // Handle edge case where all values are null/zero
+        if (validData.length === 0) {
+            return {
+                type: 'pie',
+                data: { labels: ['No data'], datasets: [{ data: [1], backgroundColor: ['#e5e7eb'] }] },
+                options: { plugins: { legend: { display: false }, tooltip: { enabled: false } } }
+            };
+        }
+
+        const filteredLabels = validData.map(d => d.label);
+        const data = validData.map(d => d.value);
+        const total = data.reduce((sum, val) => sum + val, 0);
+
+        // For many categories, use bottom legend; for few, use right legend
+        const legendPosition = filteredLabels.length > 6 ? 'bottom' : 'right';
+
         return {
-            type: 'doughnut', // Doughnut looks more modern than pie
+            type: chartType === 'pie' ? 'pie' : 'doughnut',
             data: {
-                labels: rowKeys,
+                labels: filteredLabels,
                 datasets: [{
                     data: data,
-                    backgroundColor: palette.slice(0, rowKeys.length),
+                    backgroundColor: palette.slice(0, filteredLabels.length),
                     borderColor: '#ffffff',
                     borderWidth: 2,
                     hoverBorderWidth: 3,
@@ -1284,15 +1393,35 @@ function prepareChartData(pivotResult, config) {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                cutout: '60%',
+                cutout: chartType === 'doughnut' ? '60%' : 0,
+                layout: {
+                    padding: { top: 10, bottom: 10 }
+                },
                 plugins: {
                     legend: {
-                        position: 'right',
+                        position: legendPosition,
                         labels: {
-                            padding: 15,
+                            padding: legendPosition === 'bottom' ? 10 : 15,
                             usePointStyle: true,
                             pointStyle: 'circle',
-                            font: { size: 11, family: "'Inter', sans-serif" }
+                            font: { size: 10, family: "'Inter', sans-serif" },
+                            boxWidth: 8,
+                            generateLabels: function(chart) {
+                                const data = chart.data;
+                                if (data.labels.length && data.datasets.length) {
+                                    return data.labels.map((label, i) => {
+                                        const value = data.datasets[0].data[i];
+                                        const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                        return {
+                                            text: `${label} (${pct}%)`,
+                                            fillStyle: data.datasets[0].backgroundColor[i],
+                                            hidden: false,
+                                            index: i
+                                        };
+                                    });
+                                }
+                                return [];
+                            }
                         }
                     },
                     tooltip: {
@@ -1300,23 +1429,57 @@ function prepareChartData(pivotResult, config) {
                         padding: 12,
                         cornerRadius: 8,
                         titleFont: { size: 13, weight: '600' },
-                        bodyFont: { size: 12 }
-                    }
+                        bodyFont: { size: 12 },
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.raw;
+                                const pct = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                return `${context.label}: ${value.toLocaleString()} (${pct}%)`;
+                            }
+                        }
+                    },
+                    datalabels: showLabels ? {
+                        color: '#fff',
+                        font: { weight: 'bold', size: 10 },
+                        formatter: (value) => {
+                            const pct = total > 0 ? ((value / total) * 100).toFixed(0) : 0;
+                            return `${pct}%`;
+                        },
+                        display: (context) => {
+                            // Only show labels for slices > 5%
+                            const value = context.dataset.data[context.dataIndex];
+                            return (value / total) > 0.05;
+                        }
+                    } : { display: false }
                 },
                 animation: {
                     animateRotate: true,
                     animateScale: true
                 }
-            }
+            },
+            plugins: showLabels ? [ChartDataLabels] : []
         };
     }
 
-    // Bar or Line chart
-    const datasets = colKeys.map((ck, idx) => {
+    // Determine actual chart type for Chart.js
+    const isHorizontal = chartType === 'horizontalBar';
+    const isArea = chartType === 'area';
+    const actualType = isHorizontal ? 'bar' : (isArea ? 'line' : chartType);
+
+    // Guard against empty colKeys
+    const safeColKeys = (!colKeys || colKeys.length === 0) ? [null] : colKeys;
+
+    // Bar, Line, or Area chart
+    const datasets = safeColKeys.map((ck, idx) => {
         const color = palette[idx % palette.length];
+        // Convert null values to 0 to prevent blank charts
+        const dataValues = rowKeys.map(rk => {
+            const val = getValue(rk, ck);
+            return val != null ? val : 0;
+        });
         const baseConfig = {
             label: ck != null ? String(ck) : 'Value',
-            data: rowKeys.map(rk => getValue(rk, ck))
+            data: dataValues
         };
 
         if (chartType === 'line') {
@@ -1325,7 +1488,7 @@ function prepareChartData(pivotResult, config) {
                 borderColor: color,
                 backgroundColor: hexToRgba(color, 0.1),
                 borderWidth: 2.5,
-                fill: true,
+                fill: false,
                 tension: 0.3,
                 pointRadius: 4,
                 pointHoverRadius: 6,
@@ -1335,8 +1498,22 @@ function prepareChartData(pivotResult, config) {
                 pointHoverBackgroundColor: color,
                 pointHoverBorderColor: '#ffffff'
             };
+        } else if (isArea) {
+            return {
+                ...baseConfig,
+                borderColor: color,
+                backgroundColor: hexToRgba(color, 0.3),
+                borderWidth: 2.5,
+                fill: true,
+                tension: 0.3,
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                pointBackgroundColor: color,
+                pointBorderColor: '#ffffff',
+                pointBorderWidth: 2
+            };
         } else {
-            // Bar chart
+            // Bar chart (vertical or horizontal)
             return {
                 ...baseConfig,
                 backgroundColor: hexToRgba(color, 0.85),
@@ -1350,7 +1527,7 @@ function prepareChartData(pivotResult, config) {
     });
 
     return {
-        type: chartType,
+        type: actualType,
         data: {
             labels: rowKeys,
             datasets: datasets
@@ -1358,6 +1535,7 @@ function prepareChartData(pivotResult, config) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            indexAxis: isHorizontal ? 'y' : 'x',
             interaction: {
                 intersect: false,
                 mode: 'index'
@@ -1365,18 +1543,20 @@ function prepareChartData(pivotResult, config) {
             scales: {
                 x: {
                     grid: {
-                        display: false
+                        display: isHorizontal
                     },
                     ticks: {
                         font: { size: 11, family: "'Inter', sans-serif" },
                         color: '#64748b'
-                    }
+                    },
+                    beginAtZero: isHorizontal
                 },
                 y: {
-                    beginAtZero: true,
+                    beginAtZero: !isHorizontal,
                     grid: {
                         color: 'rgba(148, 163, 184, 0.1)',
-                        drawBorder: false
+                        drawBorder: false,
+                        display: !isHorizontal
                     },
                     ticks: {
                         font: { size: 11, family: "'Inter', sans-serif" },
@@ -1403,13 +1583,21 @@ function prepareChartData(pivotResult, config) {
                     cornerRadius: 8,
                     titleFont: { size: 13, weight: '600' },
                     bodyFont: { size: 12 }
-                }
+                },
+                datalabels: showLabels ? {
+                    color: isHorizontal || chartType === 'bar' ? '#fff' : '#333',
+                    anchor: isHorizontal || chartType === 'bar' ? 'center' : 'end',
+                    align: isHorizontal || chartType === 'bar' ? 'center' : 'top',
+                    font: { weight: 'bold', size: 10 },
+                    formatter: (value) => value.toLocaleString()
+                } : { display: false }
             },
             animation: {
                 duration: 500,
                 easing: 'easeOutQuart'
             }
-        }
+        },
+        plugins: showLabels ? [ChartDataLabels] : []
     };
 }
 
@@ -2249,12 +2437,20 @@ function createAnalysisCard(cardId, userText) {
             <!-- Footer with actions -->
             <div class="analysis-card-footer">
                 <span id="${cardId}-meta" class="analysis-meta"></span>
-                <div class="analysis-actions">
-                    <select id="${cardId}-chart-type">
+                <div class="analysis-actions flex items-center gap-2">
+                    <select id="${cardId}-chart-type" class="text-sm border rounded px-2 py-1">
                         <option value="bar">Bar</option>
+                        <option value="horizontalBar">H-Bar</option>
                         <option value="line">Line</option>
+                        <option value="area">Area</option>
                         <option value="pie">Pie</option>
+                        <option value="doughnut">Doughnut</option>
+                        <option value="table">Table</option>
                     </select>
+                    <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+                        <input type="checkbox" id="${cardId}-show-labels" class="w-3 h-3">
+                        <span>Labels</span>
+                    </label>
                     <button type="button" id="${cardId}-add-btn" class="btn-pin">
                         + Dashboard
                     </button>
@@ -2418,9 +2614,24 @@ function buildAndDisplayPivotInCard(config, dataRows, cardId) {
         chartTypeEl.addEventListener('change', () => {
             const newType = chartTypeEl.value;
             const data = window.cardData[cardId];
+            const showLabelsEl = document.getElementById(`${cardId}-show-labels`);
+            const showLabels = showLabelsEl ? showLabelsEl.checked : false;
             if (data) {
-                renderChartInCard(cardId, data.pivotResult, { ...data.config, chartType: newType });
+                renderChartInCard(cardId, data.pivotResult, { ...data.config, chartType: newType, showLabels });
                 window.cardData[cardId].config.chartType = newType;
+            }
+        });
+    }
+
+    // Set up labels toggle
+    const showLabelsEl = document.getElementById(`${cardId}-show-labels`);
+    if (showLabelsEl) {
+        showLabelsEl.addEventListener('change', () => {
+            const data = window.cardData[cardId];
+            if (data) {
+                const showLabels = showLabelsEl.checked;
+                renderChartInCard(cardId, data.pivotResult, { ...data.config, showLabels });
+                window.cardData[cardId].config.showLabels = showLabels;
             }
         });
     }
@@ -2453,6 +2664,12 @@ function renderChartInCard(cardId, pivotResult, config) {
     if (analysisCharts[cardId]) {
         analysisCharts[cardId].destroy();
         delete analysisCharts[cardId];
+    }
+
+    // Handle "table" type - render as HTML table instead of chart
+    if (config.chartType === 'table') {
+        container.innerHTML = renderPivotTableHTML(pivotResult, config);
+        return;
     }
 
     // Reset canvas
@@ -3343,7 +3560,19 @@ function renderChartsGrid() {
                     <span class="chart-card-title">${escapeHtml(chart.config.title || 'Chart')}</span>
                     <p class="chart-card-subtitle text-xs text-gray-500 mt-0.5">${escapeHtml(subtitle)}</p>
                 </div>
-                <div class="chart-card-actions">
+                <div class="chart-card-actions flex items-center gap-2">
+                    <select id="dash-type-${chart.id}" class="text-xs border rounded px-1.5 py-0.5">
+                        <option value="bar" ${chart.config.chartType === 'bar' || !chart.config.chartType ? 'selected' : ''}>Bar</option>
+                        <option value="horizontalBar" ${chart.config.chartType === 'horizontalBar' ? 'selected' : ''}>H-Bar</option>
+                        <option value="line" ${chart.config.chartType === 'line' ? 'selected' : ''}>Line</option>
+                        <option value="area" ${chart.config.chartType === 'area' ? 'selected' : ''}>Area</option>
+                        <option value="pie" ${chart.config.chartType === 'pie' ? 'selected' : ''}>Pie</option>
+                        <option value="doughnut" ${chart.config.chartType === 'doughnut' ? 'selected' : ''}>Doughnut</option>
+                    </select>
+                    <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+                        <input type="checkbox" id="dash-labels-${chart.id}" class="w-3 h-3" ${chart.config.showLabels ? 'checked' : ''}>
+                        <span>Labels</span>
+                    </label>
                     <button class="chart-delete-btn text-red-500 hover:text-red-700" data-id="${chart.id}">✕</button>
                 </div>
             </div>
@@ -3359,6 +3588,24 @@ function renderChartsGrid() {
             e.stopPropagation();
             removeDashboardChart(chart.id);
         });
+
+        // Add chart type change handler
+        const typeSelect = card.querySelector(`#dash-type-${chart.id}`);
+        if (typeSelect) {
+            typeSelect.addEventListener('change', (e) => {
+                chart.config.chartType = e.target.value;
+                renderDashboardChart(chart.id);
+            });
+        }
+
+        // Add labels toggle handler
+        const labelsCheckbox = card.querySelector(`#dash-labels-${chart.id}`);
+        if (labelsCheckbox) {
+            labelsCheckbox.addEventListener('change', (e) => {
+                chart.config.showLabels = e.target.checked;
+                renderDashboardChart(chart.id);
+            });
+        }
     });
 }
 
@@ -3387,9 +3634,27 @@ function renderDashboardChart(chartId) {
     let dataToUse = getDashboardFilteredData();
     console.log(`[Dashboard] Chart ${chartId}: data rows = ${dataToUse.length}, config =`, chart.config);
 
-    // Apply chart-specific filters
+    // Apply chart-specific filters, but skip time-based filters if global time filter is active
     if (chart.config.filters && chart.config.filters.length > 0) {
-        dataToUse = applyQueryFilters(dataToUse, chart.config.filters);
+        let filtersToApply = chart.config.filters;
+
+        // If global quarter/month filter is set, skip chart's conflicting time filters
+        const hasGlobalQuarter = dashboardFilters['Date_Quarter'] || dashboardFilters['Quarter'];
+        const hasGlobalMonth = dashboardFilters['Date_Month'] || dashboardFilters['Month'];
+
+        if (hasGlobalQuarter || hasGlobalMonth) {
+            filtersToApply = filtersToApply.filter(f => {
+                const colLower = (f.column || '').toLowerCase();
+                // Skip month filters if global quarter or month is set
+                if (hasGlobalQuarter && colLower.includes('month')) return false;
+                if (hasGlobalMonth && colLower.includes('month')) return false;
+                // Skip quarter filters if global quarter is set
+                if (hasGlobalQuarter && colLower.includes('quarter')) return false;
+                return true;
+            });
+        }
+
+        dataToUse = applyQueryFilters(dataToUse, filtersToApply);
     }
 
     // Apply computed columns (month, quarter)
@@ -3428,12 +3693,15 @@ function renderDashboardChart(chartId) {
     if (chart.config.sortBy && pivotResult.rowKeys && pivotResult.rowKeys.length > 0) {
         const sortDir = chart.config.sortBy.direction === 'asc' ? 1 : -1;
 
-        // Create array of {key, value} for sorting
+        // Create array of {key, value} for sorting using getValue function
         const sortable = pivotResult.rowKeys.map((key, idx) => {
-            const value = pivotResult.colKeys.length > 0
-                ? Object.values(pivotResult.grid[key] || {}).reduce((a, b) => a + b, 0)
-                : pivotResult.grid[key]?.[''] || 0;
-            return { key, value, idx };
+            // Sum up values across all colKeys for this row
+            let totalValue = 0;
+            pivotResult.colKeys.forEach(ck => {
+                const val = pivotResult.getValue(key, ck);
+                if (val != null) totalValue += val;
+            });
+            return { key, value: totalValue, idx };
         });
 
         sortable.sort((a, b) => sortDir * (a.value - b.value));

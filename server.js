@@ -135,7 +135,8 @@ Given a user's question and their data structure, extract:
 3. colField: Optional secondary grouping
 4. valueField: Numeric column to measure/aggregate
 5. aggType: "sum" (default for quantities), "avg" (for averages), "count" (for counting rows)
-6. chartType: "bar" (default), "line" (for trends), "pie" (for proportions), "number" (for single value display)
+6. chartType: "bar" (default), "line" (for trends over time), "pie" (for proportions/percentages/share/breakdown), "number" (for single value display)
+   - Use "pie" when user asks about: percent, percentage, proportion, share, breakdown by category, distribution
 7. timeGrouping: "month" or "quarter" - ONLY if user wants to GROUP by time periods (e.g., "by month", "by quarter")
 8. monthFilter: The specific month name if user asks about a specific month (e.g., "March")
 9. quarterFilter: The specific quarter if user asks about a specific quarter (e.g., "Q1", "Q2", "Q3", "Q4")
@@ -242,6 +243,18 @@ Query: "total sales by day in November"
   "singleValue": false
 }
 (Note: "by day" means GROUP by day - show each day as a bar)
+
+Query: "what percent of total expenses is attributed to each category" or "breakdown by category"
+→ {
+  "filters": [],
+  "rowField": "Category",
+  "colField": "",
+  "valueField": "Amount",
+  "aggType": "sum",
+  "chartType": "pie",
+  "singleValue": false
+}
+(Note: percentage/proportion questions should use pie chart)
 
 Return ONLY valid JSON (no markdown, no explanation):
 {
