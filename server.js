@@ -111,28 +111,35 @@ CRITICAL RULES:
 2. "ALL" MEANS NO FILTER: If user says "all products", "all cookies", "every region", "each salesperson" - do NOT add a filter for that column. Just group by it.
    - "all cookies by salesperson" → filters: [], rowField: "Salesperson" (no Product filter!)
    - "compare all products" → filters: [], rowField: "Product"
-3. MONTH/TIME REFERENCES:
-   - "in March", "during January" → add monthFilter, do NOT change rowField
+3. SINGLE TOTAL (NO GROUPING):
+   - "total for November", "what's the total", "sum of all sales" → set rowField: null and singleValue: true
+   - When user wants ONE number (not broken down by anything), use singleValue: true
+   - DO NOT group by date/day when user just wants a total
+   - "total for November" = filter to November, show ONE total (singleValue: true)
+   - "total BY DAY in November" = filter to November, group by day (singleValue: false)
+4. MONTH/TIME REFERENCES:
+   - "in March", "during January", "for November" → add monthFilter, do NOT change rowField
    - "by month", "monthly" → Use timeGrouping: "month" to group by month
    - "by quarter", "quarterly" → Use timeGrouping: "quarter" to group by quarter
-4. QUARTER REFERENCES:
+5. QUARTER REFERENCES:
    - "in Q1", "first quarter", "in the first quarter" → add quarterFilter: "Q1", do NOT change rowField
    - "second quarter", "Q2" → quarterFilter: "Q2"
    - "third quarter", "Q3" → quarterFilter: "Q3"
    - "fourth quarter", "Q4" → quarterFilter: "Q4"
-5. AGGREGATION: Default to "sum" for quantities/amounts. Use "count" only for counting rows.
-6. IMPORTANT: When user asks "which X has highest Y in [time period]", the rowField should be X (not the time period). The time period is a FILTER.
+6. AGGREGATION: Default to "sum" for quantities/amounts. Use "count" only for counting rows.
+7. IMPORTANT: When user asks "which X has highest Y in [time period]", the rowField should be X (not the time period). The time period is a FILTER.
 
 Given a user's question and their data structure, extract:
 1. filters: Array of {column, value} - items to filter the data BY
-2. rowField: Column name to group by (x-axis). For time queries, use the Date column.
+2. rowField: Column name to group by (x-axis). Set to null if user wants a single total.
 3. colField: Optional secondary grouping
 4. valueField: Numeric column to measure/aggregate
 5. aggType: "sum" (default for quantities), "avg" (for averages), "count" (for counting rows)
-6. chartType: "bar" (default), "line" (for trends), "pie" (for proportions)
+6. chartType: "bar" (default), "line" (for trends), "pie" (for proportions), "number" (for single value display)
 7. timeGrouping: "month" or "quarter" - ONLY if user wants to GROUP by time periods (e.g., "by month", "by quarter")
 8. monthFilter: The specific month name if user asks about a specific month (e.g., "March")
 9. quarterFilter: The specific quarter if user asks about a specific quarter (e.g., "Q1", "Q2", "Q3", "Q4")
+10. singleValue: true if user wants ONE total number (no breakdown/grouping)
 
 Available columns: ${JSON.stringify(columns)}
 Column types: ${JSON.stringify(columnTypes)}
@@ -210,6 +217,32 @@ Query: "show sales by quarter"
 }
 (Note: "by quarter" means GROUP by quarter, so use timeGrouping)
 
+Query: "what is the total for November" or "give me the total for November"
+→ {
+  "filters": [],
+  "rowField": null,
+  "colField": "",
+  "valueField": "Amount",
+  "aggType": "sum",
+  "chartType": "number",
+  "monthFilter": "November",
+  "singleValue": true
+}
+(Note: User wants ONE total number, not a chart. Use singleValue: true and rowField: null)
+
+Query: "total sales by day in November"
+→ {
+  "filters": [],
+  "rowField": "Date",
+  "colField": "",
+  "valueField": "Amount",
+  "aggType": "sum",
+  "chartType": "bar",
+  "monthFilter": "November",
+  "singleValue": false
+}
+(Note: "by day" means GROUP by day - show each day as a bar)
+
 Return ONLY valid JSON (no markdown, no explanation):
 {
   "filters": [],
@@ -220,6 +253,7 @@ Return ONLY valid JSON (no markdown, no explanation):
   "chartType": "bar",
   "timeGrouping": null,
   "monthFilter": null,
+  "singleValue": false,
   "quarterFilter": null
 }`;
 

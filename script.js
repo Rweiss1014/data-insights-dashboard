@@ -2300,8 +2300,8 @@ function buildAndDisplayPivotInCard(config, dataRows, cardId) {
     const chartTypeEl = document.getElementById(`${cardId}-chart-type`);
     const addBtn = document.getElementById(`${cardId}-add-btn`);
 
-    // Validation
-    if (!config.rowField || !config.valueField) {
+    // Validation - allow null rowField if singleValue mode
+    if (!config.valueField) {
         if (explanationEl) {
             explanationEl.innerHTML = `<span class="text-amber-600">I couldn't map that to your columns. Try mentioning specific column names like: ${columnNames.slice(0, 3).join(', ')}</span>`;
         }
@@ -2312,6 +2312,67 @@ function buildAndDisplayPivotInCard(config, dataRows, cardId) {
     if (!dataRows || dataRows.length === 0) {
         if (explanationEl) {
             explanationEl.innerHTML = '<span class="text-amber-600">No rows matched your filters.</span>';
+        }
+        if (chartContainer) chartContainer.innerHTML = '';
+        return;
+    }
+
+    // Handle single value mode (no grouping - just show one total)
+    if (config.singleValue || config.chartType === 'number' || !config.rowField) {
+        const total = dataRows.reduce((sum, row) => {
+            const val = parseFloat(row[config.valueField]) || 0;
+            return sum + val;
+        }, 0);
+
+        // Format the total
+        const formattedTotal = config.valueField.toLowerCase().includes('amount') ||
+                               config.valueField.toLowerCase().includes('sales') ||
+                               config.valueField.toLowerCase().includes('price')
+            ? '$' + total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            : total.toLocaleString();
+
+        // Update explanation
+        if (explanationEl) {
+            const aggWord = config.aggType === 'sum' ? 'Total' : config.aggType === 'avg' ? 'Average' : 'Count';
+            let text = `${aggWord} ${config.valueField}`;
+            if (config.filters && config.filters.length > 0) {
+                const filterDesc = config.filters.map(f => `${f.column} = ${f.values.join(', ')}`).join('; ');
+                text += ` (${filterDesc})`;
+            }
+            explanationEl.textContent = text;
+        }
+
+        // Display as a big number card
+        if (chartContainer) {
+            chartContainer.innerHTML = `
+                <div class="flex flex-col items-center justify-center py-8">
+                    <div class="text-5xl font-bold text-indigo-600 mb-2">${formattedTotal}</div>
+                    <div class="text-sm text-gray-500">${config.valueField}</div>
+                </div>
+            `;
+        }
+
+        // Meta
+        if (metaEl) {
+            metaEl.textContent = `${dataRows.length} rows`;
+        }
+
+        // Hide chart type selector for single values
+        if (chartTypeEl) {
+            chartTypeEl.closest('.flex')?.classList.add('hidden');
+        }
+
+        // Store for potential dashboard use
+        if (!window.cardData) window.cardData = {};
+        window.cardData[cardId] = { config, dataRows, total };
+
+        return;
+    }
+
+    // Validation for chart mode - need rowField
+    if (!config.rowField) {
+        if (explanationEl) {
+            explanationEl.innerHTML = `<span class="text-amber-600">I couldn't determine how to group your data. Try "by product" or "by salesperson".</span>`;
         }
         if (chartContainer) chartContainer.innerHTML = '';
         return;
