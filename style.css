@@ -1,0 +1,632 @@
+/* Minimal custom styles - most styling is done with Tailwind */
+
+/* Pivot table styling */
+#pivot-container table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+#pivot-container th {
+    background-color: #f3f4f6;
+    font-weight: 600;
+    text-align: left;
+    padding: 0.5rem;
+    border: 1px solid #e5e7eb;
+    cursor: pointer;
+    user-select: none;
+}
+
+#pivot-container th:hover {
+    background-color: #e5e7eb;
+}
+
+#pivot-container td {
+    padding: 0.5rem;
+    border: 1px solid #e5e7eb;
+}
+
+#pivot-container tr:hover {
+    background-color: #f9fafb;
+}
+
+#pivot-container .sort-icon {
+    display: inline-block;
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
+}
+
+/* Data sample table styling */
+#data-sample table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+#data-sample th {
+    background-color: #f3f4f6;
+    font-weight: 600;
+    text-align: left;
+    padding: 0.5rem;
+    border: 1px solid #e5e7eb;
+}
+
+#data-sample td {
+    padding: 0.5rem;
+    border: 1px solid #e5e7eb;
+}
+
+#data-sample tr:hover {
+    background-color: #f9fafb;
+}
+
+/* Alert messages */
+.alert-message {
+    padding: 0.5rem;
+    border-radius: 0.25rem;
+    margin-bottom: 0.25rem;
+}
+
+.alert-error {
+    background-color: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+}
+
+.alert-warning {
+    background-color: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fde68a;
+}
+
+.alert-info {
+    background-color: #dbeafe;
+    color: #1e40af;
+    border: 1px solid #bfdbfe;
+}
+
+.alert-success {
+    background-color: #d1fae5;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+}
+
+/* ================================
+   CHAT PANEL STYLES
+   ================================ */
+
+/* Chat message bubbles */
+.chat-message {
+    max-width: 90%;
+    padding: 0.75rem 1rem;
+    border-radius: 1rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+
+.chat-message.user {
+    background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+    color: white;
+    margin-left: auto;
+    border-bottom-right-radius: 0.25rem;
+}
+
+.chat-message.assistant {
+    background-color: #f3f4f6;
+    color: #1f2937;
+    margin-right: auto;
+    border-bottom-left-radius: 0.25rem;
+}
+
+.chat-message.assistant.thinking {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+/* Suggestion chips in chat */
+.chat-suggestion-chip {
+    display: inline-block;
+    padding: 0.375rem 0.75rem;
+    background-color: #e0e7ff;
+    color: #4338ca;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin: 0.25rem;
+}
+
+.chat-suggestion-chip:hover {
+    background-color: #4338ca;
+    color: white;
+}
+
+/* Chart cards in dashboard */
+.chart-card {
+    background: white;
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    transition: box-shadow 0.15s;
+}
+
+.chart-card:hover {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.chart-card-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.chart-card-title {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: #374151;
+}
+
+.chart-card-body {
+    padding: 1rem;
+    height: 250px;
+    position: relative;
+}
+
+.chart-card-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.chart-card-actions button {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    border-radius: 0.375rem;
+    transition: all 0.15s;
+}
+
+/* Typing indicator */
+.typing-indicator {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.5rem;
+}
+
+.typing-indicator span {
+    width: 0.5rem;
+    height: 0.5rem;
+    background-color: #9ca3af;
+    border-radius: 50%;
+    animation: typing-bounce 1.4s infinite ease-in-out;
+}
+
+.typing-indicator span:nth-child(1) { animation-delay: 0s; }
+.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing-bounce {
+    0%, 80%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-0.375rem); }
+}
+
+/* Scrollbar styling for chat */
+#chat-messages::-webkit-scrollbar {
+    width: 6px;
+}
+
+#chat-messages::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+#chat-messages::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+#chat-messages::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* ================================
+   PRESENTATION MODE STYLES
+   ================================ */
+
+/* Hide chat panel in presentation mode */
+body.presentation-mode #chat-panel {
+    display: none !important;
+}
+
+/* Hide upload screen in presentation mode */
+body.presentation-mode #upload-screen {
+    display: none !important;
+}
+
+/* Show main app in presentation mode */
+body.presentation-mode #main-app {
+    display: block !important;
+}
+
+/* Dashboard takes full width in presentation mode */
+body.presentation-mode #dashboard-panel {
+    width: 100%;
+}
+
+/* Presentation mode header styling */
+body.presentation-mode header {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+body.presentation-mode header h1 {
+    color: white;
+}
+
+body.presentation-mode header .bg-blue-100 {
+    background-color: rgba(255, 255, 255, 0.2);
+    color: white;
+}
+
+body.presentation-mode #ai-status {
+    display: none;
+}
+
+body.presentation-mode #settings-btn {
+    display: none;
+}
+
+body.presentation-mode #presentation-mode-btn {
+    background-color: white;
+    color: #4f46e5;
+}
+
+body.presentation-mode #presentation-mode-btn:hover {
+    background-color: #f3f4f6;
+}
+
+/* Larger charts in presentation mode */
+body.presentation-mode #charts-grid {
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+    gap: 1.5rem;
+}
+
+body.presentation-mode .chart-card-body {
+    height: 350px !important;
+}
+
+body.presentation-mode .chart-card {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+body.presentation-mode .chart-card-title {
+    font-size: 1.125rem;
+}
+
+/* Hide clear all button in presentation mode */
+body.presentation-mode #clear-all-pins {
+    display: none !important;
+}
+
+/* Hide delete buttons on charts in presentation mode */
+body.presentation-mode .chart-delete-btn {
+    display: none !important;
+}
+
+/* Active filters summary styling */
+#active-filters-summary {
+    background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    margin-top: 1rem;
+}
+
+#active-filters-text {
+    font-weight: 500;
+}
+
+/* Slicer controls styling */
+#slicer-controls select {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.5rem;
+    background-color: white;
+    font-size: 0.875rem;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+#slicer-controls select:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+#slicer-controls label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 0.375rem;
+}
+
+/* Presentation mode background */
+body.presentation-mode {
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+}
+
+/* Empty state for pinned charts in presentation mode */
+body.presentation-mode #pinned-charts-section:empty::after,
+body.presentation-mode #pinned-charts-grid:empty::after {
+    content: 'No charts pinned yet. Exit presentation mode to create charts.';
+    display: block;
+    text-align: center;
+    padding: 3rem;
+    color: #6b7280;
+    font-size: 1rem;
+}
+
+/* ================================
+   TAB NAVIGATION STYLES
+   ================================ */
+
+.tab-btn {
+    color: #6b7280;
+    background-color: transparent;
+}
+
+.tab-btn:hover {
+    color: #374151;
+    background-color: #f3f4f6;
+}
+
+.tab-btn.active {
+    color: #4f46e5;
+    background-color: #eef2ff;
+}
+
+/* ================================
+   ANALYSIS CARD STYLES (Chat-first)
+   ================================ */
+
+.analysis-card {
+    background: white;
+    border-radius: 1rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
+    transition: all 0.2s ease;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.analysis-card:hover {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+    transform: translateY(-1px);
+}
+
+/* User query bubble */
+.user-query-bubble {
+    display: inline-block;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+    padding: 0.625rem 1rem;
+    border-radius: 1rem;
+    border-bottom-left-radius: 0.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    max-width: 85%;
+    line-height: 1.4;
+}
+
+/* AI response header */
+.ai-response-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1rem 1.25rem 0.75rem;
+    border-bottom: 1px solid #f1f5f9;
+    background: linear-gradient(to bottom, #fafbfc, white);
+}
+
+.ai-avatar {
+    width: 1.75rem;
+    height: 1.75rem;
+    background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+    border-radius: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    color: white;
+    font-weight: 600;
+}
+
+.ai-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+.analysis-timestamp {
+    font-size: 0.625rem;
+    color: #94a3b8;
+    margin-left: auto;
+}
+
+/* Card content area */
+.analysis-card-content {
+    padding: 1rem 1.25rem;
+}
+
+/* Explanation text */
+.analysis-explanation {
+    font-size: 0.8125rem;
+    color: #64748b;
+    line-height: 1.5;
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    background: #f8fafc;
+    border-radius: 0.5rem;
+    border-left: 3px solid #6366f1;
+}
+
+/* Chart container */
+.analysis-chart-container {
+    height: 220px;
+    margin: 0 -0.25rem;
+    position: relative;
+}
+
+/* Card footer with actions */
+.analysis-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1.25rem;
+    background: #fafbfc;
+    border-top: 1px solid #f1f5f9;
+}
+
+.analysis-meta {
+    font-size: 0.75rem;
+    color: #94a3b8;
+}
+
+.analysis-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.analysis-actions select {
+    font-size: 0.75rem;
+    padding: 0.375rem 0.625rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.375rem;
+    background: white;
+    color: #475569;
+    cursor: pointer;
+}
+
+.analysis-actions select:focus {
+    outline: none;
+    border-color: #6366f1;
+}
+
+.btn-pin {
+    font-size: 0.75rem;
+    padding: 0.375rem 0.75rem;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+    border: none;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.btn-pin:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px -1px rgba(99, 102, 241, 0.3);
+}
+
+.btn-close-card {
+    width: 1.5rem;
+    height: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.375rem;
+    color: #94a3b8;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.btn-close-card:hover {
+    background: #fee2e2;
+    color: #ef4444;
+}
+
+/* Table toggle */
+.analysis-table-toggle {
+    font-size: 0.75rem;
+    color: #6366f1;
+    cursor: pointer;
+    padding: 0.5rem 1.25rem;
+    display: block;
+    text-align: center;
+    transition: background 0.15s;
+}
+
+.analysis-table-toggle:hover {
+    background: #f1f5f9;
+}
+
+.analysis-table-container {
+    max-height: 200px;
+    overflow-y: auto;
+    border-top: 1px solid #f1f5f9;
+}
+
+.analysis-table-container table {
+    width: 100%;
+    font-size: 0.75rem;
+    border-collapse: collapse;
+}
+
+.analysis-table-container th {
+    background: #f8fafc;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    font-weight: 600;
+    color: #475569;
+    border-bottom: 1px solid #e2e8f0;
+    position: sticky;
+    top: 0;
+}
+
+.analysis-table-container td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #f1f5f9;
+    color: #64748b;
+}
+
+.analysis-table-container tr:hover td {
+    background: #f8fafc;
+}
+
+/* No data state */
+.no-data-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 180px;
+    color: #94a3b8;
+    font-size: 0.875rem;
+}
+
+/* Scrollbar styling */
+#chat-tab-content::-webkit-scrollbar,
+#dashboard-tab-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+#chat-tab-content::-webkit-scrollbar-track,
+#dashboard-tab-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#chat-tab-content::-webkit-scrollbar-thumb,
+#dashboard-tab-content::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+#chat-tab-content::-webkit-scrollbar-thumb:hover,
+#dashboard-tab-content::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}

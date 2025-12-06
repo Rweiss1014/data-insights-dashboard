@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Insights Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+
+    <!-- Header -->
+    <header class="bg-white shadow-sm px-6 py-4">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <h1 class="text-2xl font-bold text-gray-800">📊 Data Insights</h1>
+                <span class="bg-blue-100 text-blue-800 text-xs font-semibold px-2.5 py-0.5 rounded">v0.2</span>
+            </div>
+            <div class="flex items-center gap-4">
+                <div id="ai-status" class="text-sm text-gray-600">
+                    <span id="ai-status-text">AI: Not configured</span>
+                </div>
+                <button id="presentation-mode-btn" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 rounded text-sm font-semibold text-white transition">Present</button>
+                <button id="settings-btn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 rounded text-sm font-semibold text-gray-700 transition">⚙️ Settings</button>
+                <button id="help-btn" class="w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center text-gray-700 font-semibold transition">?</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Initial Upload Screen (shown before data is loaded) -->
+    <div id="upload-screen" class="flex items-center justify-center min-h-[calc(100vh-80px)]">
+        <div class="bg-white rounded-xl shadow-lg p-12 text-center border-2 border-dashed border-gray-300 hover:border-blue-400 transition max-w-lg mx-auto">
+            <div class="mb-6">
+                <svg class="mx-auto h-16 w-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                </svg>
+            </div>
+            <h2 class="text-2xl font-bold text-gray-800 mb-3">Upload Your Data</h2>
+            <p class="text-gray-600 mb-6">Excel files (.xlsx, .xls) or CSV - we'll handle the rest</p>
+            <input type="file" multiple accept=".xlsx,.xls,.csv" id="file-input" class="hidden">
+            <button id="upload-btn" class="bg-blue-600 text-white px-8 py-4 rounded-lg font-semibold text-lg hover:bg-blue-700 transition shadow-lg">
+                Choose Files
+            </button>
+            <p class="mt-6 text-sm text-gray-500">Then chat with your data using AI</p>
+        </div>
+    </div>
+
+    <!-- Main App (shown after data is loaded) -->
+    <main id="main-app" class="hidden h-[calc(100vh-80px)]">
+        <div class="flex h-full">
+
+            <!-- LEFT PANEL: Chat -->
+            <div id="chat-panel" class="w-[400px] flex-shrink-0 bg-white border-r border-gray-200 flex flex-col">
+
+                <!-- Data Summary Header -->
+                <div id="data-header" class="p-4 border-b border-gray-200 bg-gray-50">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="font-bold text-gray-800 text-sm">Your Data</h3>
+                            <p id="file-summary" class="text-xs text-gray-600 mt-1"></p>
+                        </div>
+                        <button id="change-file-btn" class="text-xs text-blue-600 hover:text-blue-800 font-medium">Change</button>
+                    </div>
+                </div>
+
+                <!-- Chat Messages -->
+                <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-4">
+                    <!-- Messages will be added here -->
+                </div>
+
+                <!-- Chat Input -->
+                <div class="p-4 border-t border-gray-200 bg-white">
+                    <div class="flex gap-2">
+                        <input type="text" id="chat-input"
+                            placeholder="Ask about your data..."
+                            class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition text-sm">
+                        <button id="chat-send-btn" class="px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">Try: "Show sales by month" or "Create a pie chart of products"</p>
+                </div>
+            </div>
+
+            <!-- RIGHT PANEL: Main Content Area -->
+            <div id="dashboard-panel" class="flex-1 flex flex-col bg-gradient-to-br from-slate-50 to-slate-100">
+
+                <!-- Tab Navigation -->
+                <div class="bg-white border-b border-gray-200 px-6 py-2 flex items-center justify-between">
+                    <div class="flex gap-1">
+                        <button id="tab-chat" class="tab-btn active px-4 py-2 text-sm font-semibold rounded-lg transition-all">
+                            💬 Chat
+                        </button>
+                        <button id="tab-dashboard" class="tab-btn px-4 py-2 text-sm font-semibold rounded-lg transition-all">
+                            📊 Dashboard
+                            <span id="dashboard-count" class="hidden ml-1 px-1.5 py-0.5 text-xs bg-indigo-100 text-indigo-700 rounded-full">0</span>
+                        </button>
+                    </div>
+                    <!-- Global Filters Toggle -->
+                    <button id="toggle-filters" class="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/>
+                        </svg>
+                        Filters
+                        <span id="filter-badge" class="hidden px-1.5 py-0.5 text-xs bg-amber-100 text-amber-700 rounded-full">0</span>
+                    </button>
+                </div>
+
+                <!-- Global Filters Panel (collapsible) -->
+                <div id="slicer-panel" class="hidden bg-white border-b border-gray-200 px-6 py-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="font-semibold text-gray-700 text-sm">Global Filters</h3>
+                        <button id="clear-slicer-filters" class="text-xs text-red-500 hover:text-red-700 font-medium">Clear All</button>
+                    </div>
+                    <div id="slicer-controls" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                        <!-- Slicer dropdowns will be dynamically populated -->
+                    </div>
+                    <div id="active-filters-summary" class="hidden mt-3 pt-3 border-t border-gray-100">
+                        <span class="text-xs text-gray-500">Active: </span>
+                        <span id="active-filters-text" class="text-xs text-indigo-600 font-medium"></span>
+                    </div>
+                </div>
+
+                <!-- Tab Content: Chat -->
+                <div id="chat-tab-content" class="flex-1 overflow-y-auto p-6">
+                    <!-- Conversation Container -->
+                    <div id="conversation-container" class="max-w-3xl mx-auto flex flex-col gap-6">
+                        <!-- Welcome state -->
+                        <div id="conversation-empty-state" class="text-center py-16">
+                            <div class="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-2xl flex items-center justify-center">
+                                <svg class="w-8 h-8 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                                </svg>
+                            </div>
+                            <h3 class="text-lg font-semibold text-gray-800 mb-2">Ask me anything about your data</h3>
+                            <p class="text-gray-500 text-sm mb-1">Type a question below or click a suggestion on the left.</p>
+                            <p class="text-gray-400 text-xs">Example: "Show total sales by region" or "Compare quantity across products"</p>
+                        </div>
+                    </div>
+
+                    <!-- Clear Conversation Button (floating) -->
+                    <button id="clear-conversation" class="hidden fixed bottom-24 right-8 px-4 py-2 bg-white shadow-lg rounded-full text-sm font-medium text-gray-600 hover:text-red-600 hover:shadow-xl transition-all border border-gray-200">
+                        Clear conversation
+                    </button>
+                </div>
+
+                <!-- Tab Content: Dashboard -->
+                <div id="dashboard-tab-content" class="hidden flex-1 overflow-y-auto p-6">
+                    <div id="dashboard-empty-state" class="text-center py-16">
+                        <div class="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-emerald-100 to-teal-100 rounded-2xl flex items-center justify-center">
+                            <svg class="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-800 mb-2">Your Dashboard</h3>
+                        <p class="text-gray-500 text-sm">Pin charts from your conversations to build a custom dashboard.</p>
+                    </div>
+
+                    <!-- Dashboard Header & KPIs (shown when charts exist) -->
+                    <div id="dashboard-header" class="hidden mb-6">
+                        <!-- Title & Description -->
+                        <div class="mb-4">
+                            <h2 id="dashboard-title" class="text-xl font-bold text-gray-800">Data Overview</h2>
+                            <p id="dashboard-subtitle" class="text-sm text-gray-500 mt-1">Showing all data · No filters applied</p>
+                        </div>
+
+                        <!-- KPI Summary Strip -->
+                        <div id="kpi-strip" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                            <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+                                <div class="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Quantity</div>
+                                <div id="kpi-total-qty" class="text-2xl font-bold text-gray-800 mt-1">-</div>
+                            </div>
+                            <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+                                <div class="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Sales</div>
+                                <div id="kpi-total-sales" class="text-2xl font-bold text-gray-800 mt-1">-</div>
+                            </div>
+                            <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+                                <div class="text-xs font-medium text-gray-500 uppercase tracking-wide">Top Performer</div>
+                                <div id="kpi-top-performer" class="text-2xl font-bold text-indigo-600 mt-1">-</div>
+                            </div>
+                            <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+                                <div class="text-xs font-medium text-gray-500 uppercase tracking-wide">Top Product</div>
+                                <div id="kpi-top-product" class="text-2xl font-bold text-emerald-600 mt-1">-</div>
+                            </div>
+                        </div>
+
+                        <!-- Enhanced Filter Bar -->
+                        <div id="dashboard-filters" class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 mb-6">
+                            <div class="flex flex-wrap gap-4 items-end">
+                                <div class="flex-1 min-w-[120px]">
+                                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Quarter</label>
+                                    <select id="filter-quarter" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200">
+                                        <option value="">All Quarters</option>
+                                    </select>
+                                </div>
+                                <div class="flex-1 min-w-[120px]">
+                                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Month</label>
+                                    <select id="filter-month" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200">
+                                        <option value="">All Months</option>
+                                    </select>
+                                </div>
+                                <div class="flex-1 min-w-[120px]">
+                                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Product</label>
+                                    <select id="filter-product" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200">
+                                        <option value="">All Products</option>
+                                    </select>
+                                </div>
+                                <div class="flex-1 min-w-[120px]">
+                                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Salesperson</label>
+                                    <select id="filter-salesperson" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200">
+                                        <option value="">All Salespersons</option>
+                                    </select>
+                                </div>
+                                <div class="flex-1 min-w-[120px]">
+                                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Region</label>
+                                    <select id="filter-region" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200">
+                                        <option value="">All Regions</option>
+                                    </select>
+                                </div>
+                                <button id="clear-dashboard-filters" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-red-600 transition">
+                                    Clear
+                                </button>
+                            </div>
+                            <p id="dashboard-filter-summary" class="mt-3 text-xs text-gray-500"></p>
+                        </div>
+                    </div>
+
+                    <div id="charts-grid" class="grid grid-cols-1 lg:grid-cols-2 gap-6"></div>
+                    <button id="clear-all-pins" class="hidden fixed bottom-24 right-8 px-4 py-2 bg-white shadow-lg rounded-full text-sm font-medium text-gray-600 hover:text-red-600 hover:shadow-xl transition-all border border-gray-200">
+                        Clear dashboard
+                    </button>
+                </div>
+
+                <!-- Alerts -->
+                <div id="alerts" class="fixed bottom-20 right-6 space-y-2 z-50"></div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Hidden elements for legacy compatibility -->
+    <div class="hidden">
+        <div id="query-section"></div>
+        <div id="ai-suggestions-section"></div>
+        <div id="ai-suggestions-grid"></div>
+        <div id="ai-suggestions-loading"></div>
+        <div id="analytics-actions"></div>
+        <button id="btn-forecast"></button>
+        <button id="btn-anomalies"></button>
+        <button id="btn-cluster"></button>
+        <button id="btn-insights"></button>
+        <textarea id="nl-query"></textarea>
+        <button id="show-me-btn"></button>
+        <button id="toggle-advanced"></button>
+        <div id="nl-feedback"></div>
+        <div id="advanced-section"></div>
+        <div id="sheet-selector-card"></div>
+        <div id="sheet-checkboxes"></div>
+        <button id="apply-sheets"></button>
+        <select id="row-field"></select>
+        <select id="col-field"></select>
+        <select id="value-field"></select>
+        <select id="agg-fn"></select>
+        <select id="filter-field"></select>
+        <div id="filter-values"></div>
+        <button id="apply-filters"></button>
+        <div id="pinned-charts-section"></div>
+        <div id="pinned-charts-grid"></div>
+        <div id="results-section"></div>
+        <div id="interpretation-panel"></div>
+        <p id="interpretation"></p>
+        <h3 id="chart-title"></h3>
+        <select id="chart-type-selector"></select>
+        <button id="customize-chart-btn"></button>
+        <button id="pin-chart"></button>
+        <button id="export-excel"></button>
+        <div id="chart-customization"></div>
+        <input type="checkbox" id="toggle-data-labels">
+        <select id="color-scheme"></select>
+        <select id="legend-position"></select>
+        <select id="chart-height"></select>
+        <button id="apply-customization"></button>
+        <div id="chart-container"><canvas id="main-chart"></canvas></div>
+        <div id="data-table-panel"></div>
+        <button id="toggle-table"></button>
+        <div id="pivot-container"></div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-bold text-gray-800">🤖 AI Settings</h3>
+                <button id="close-settings" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">OpenAI API Key</label>
+                    <input type="password" id="openai-api-key" placeholder="sk-..."
+                        class="w-full px-3 py-2 border border-gray-300 rounded focus:border-blue-500 focus:ring-2 focus:ring-blue-200 text-sm">
+                    <p class="text-xs text-gray-500 mt-1">Your key is stored locally and never sent anywhere except OpenAI</p>
+                </div>
+                <div class="bg-blue-50 border border-blue-200 rounded p-3 text-sm">
+                    <p class="font-semibold text-blue-900 mb-1">💡 Why do you need this?</p>
+                    <ul class="text-blue-800 space-y-1 text-xs list-disc list-inside">
+                        <li>AI suggests relevant queries for your data</li>
+                        <li>Conversational refinement ("make it bigger", "add January")</li>
+                        <li>Smart chart type selection</li>
+                        <li>Multi-query intelligence</li>
+                    </ul>
+                </div>
+                <div class="bg-gray-50 border border-gray-200 rounded p-3 text-xs text-gray-600">
+                    <p><strong>Cost:</strong> ~$0.002 per query (500 queries ≈ $1)</p>
+                    <p class="mt-1"><strong>Get your key:</strong> <a href="https://platform.openai.com/api-keys" target="_blank" class="text-blue-600 hover:underline">platform.openai.com/api-keys</a></p>
+                </div>
+                <div class="flex gap-2">
+                    <button id="save-api-key" class="flex-1 bg-blue-600 text-white rounded py-2 font-semibold hover:bg-blue-700 transition">
+                        Save & Enable AI
+                    </button>
+                    <button id="clear-api-key" class="px-4 bg-gray-200 text-gray-700 rounded font-semibold hover:bg-gray-300 transition">
+                        Clear
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="help-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 p-8">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-2xl font-bold text-gray-800">How to Use</h3>
+                <button id="close-help" class="text-gray-400 hover:text-gray-600 text-3xl leading-none">&times;</button>
+            </div>
+            <div class="space-y-4 text-gray-700">
+                <div>
+                    <h4 class="font-bold text-lg mb-2">1. Upload Your Data</h4>
+                    <p class="text-sm">Click "Choose Files" and select your Excel or CSV files. We support multiple files and sheets.</p>
+                </div>
+                <div>
+                    <h4 class="font-bold text-lg mb-2">2. Ask Your Question</h4>
+                    <p class="text-sm mb-2">Just type what you want to see in plain English:</p>
+                    <ul class="text-sm list-disc list-inside space-y-1 ml-4">
+                        <li>"Show me sales by region"</li>
+                        <li>"Compare revenue across product types"</li>
+                        <li>"Average price per category and month"</li>
+                        <li>"How many customers in each city?"</li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 class="font-bold text-lg mb-2">3. Get Instant Insights</h4>
+                    <p class="text-sm">We'll automatically create charts and tables showing exactly what you asked for. Switch between chart types or export to Excel.</p>
+                </div>
+                <div class="pt-4 border-t border-gray-200">
+                    <p class="text-xs text-gray-500">🔒 All data processing happens in your browser. Your files never leave your device.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load SheetJS -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+
+    <!-- Load our scripts -->
+    <script src="script.js"></script>
+    <script src="analytics_handlers.js"></script>
+
+</body>
+</html>

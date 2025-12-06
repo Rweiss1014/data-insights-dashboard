@@ -1,0 +1,34 @@
+# Environment variables (NEVER commit this file!)
+.env
+
+# Node modules
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Excel temp files
+~$*.xlsx
+~$*.xls
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Sample data files (users will upload their own)
+*.xlsx
+*.xls
+*.csv
+
+# Python cache
+__pycache__/
+*.pyc
+.claude/
+nul

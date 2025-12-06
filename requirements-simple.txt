@@ -1,0 +1,10 @@
+# Simplified Python dependencies (works with Python 3.14)
+
+Flask==3.0.0
+Flask-CORS==4.0.0
+python-dotenv==1.0.0
+
+# Use latest versions that have pre-built wheels
+numpy
+pandas
+scikit-learn
