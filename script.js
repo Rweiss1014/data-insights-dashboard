@@ -1382,9 +1382,17 @@ function prepareChartData(pivotResult, config) {
 
     // Pie or Doughnut chart
     if (chartType === 'pie' || chartType === 'doughnut') {
-        // Get data and filter out null/zero values (they cause pie chart rendering issues)
-        const rawData = rowKeys.map((rk, idx) => ({ label: rk, value: getValue(rk, colKeys[0]), idx }));
-        const validData = rawData.filter(d => d.value != null && d.value > 0);
+        // Get data - sum across ALL colKeys for each rowKey (not just colKeys[0])
+        const rawData = rowKeys.map((rk, idx) => {
+            let totalValue = 0;
+            colKeys.forEach(ck => {
+                const val = getValue(rk, ck);
+                if (val != null) totalValue += val;
+            });
+            return { label: rk, value: totalValue, idx };
+        });
+        // Filter out zero values (they don't make sense as pie slices)
+        const validData = rawData.filter(d => d.value > 0);
 
         // Handle edge case where all values are null/zero
         if (validData.length === 0) {
