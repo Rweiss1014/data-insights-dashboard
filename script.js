@@ -66,12 +66,13 @@ const pinChartBtn = document.getElementById('pin-chart');
 const pinnedChartsSection = document.getElementById('pinned-charts-section');
 const pinnedChartsGrid = document.getElementById('pinned-charts-grid');
 const clearAllPinsBtn = document.getElementById('clear-all-pins');
-const settingsBtn = document.getElementById('settings-btn');
-const settingsModal = document.getElementById('settings-modal');
-const closeSettingsBtn = document.getElementById('close-settings');
-const openaiApiKeyInput = document.getElementById('openai-api-key');
-const saveApiKeyBtn = document.getElementById('save-api-key');
-const clearApiKeyBtn = document.getElementById('clear-api-key');
+// Settings removed - API keys now handled server-side only
+const settingsBtn = null;
+const settingsModal = null;
+const closeSettingsBtn = null;
+const openaiApiKeyInput = null;
+const saveApiKeyBtn = null;
+const clearApiKeyBtn = null;
 const aiStatusText = document.getElementById('ai-status-text');
 const aiSuggestionsSection = document.getElementById('ai-suggestions-section');
 const aiSuggestionsGrid = document.getElementById('ai-suggestions-grid');
@@ -133,10 +134,7 @@ toggleTableBtn.addEventListener('click', () => {
 });
 pinChartBtn.addEventListener('click', handlePinChart);
 clearAllPinsBtn.addEventListener('click', handleClearAllPins);
-settingsBtn.addEventListener('click', () => settingsModal.classList.remove('hidden'));
-closeSettingsBtn.addEventListener('click', () => settingsModal.classList.add('hidden'));
-saveApiKeyBtn.addEventListener('click', handleSaveApiKey);
-clearApiKeyBtn.addEventListener('click', handleClearApiKey);
+// Settings event listeners removed - API keys now handled server-side only
 btnForecast.addEventListener('click', handleForecast);
 btnAnomalies.addEventListener('click', handleAnomalies);
 btnCluster.addEventListener('click', handleCluster);
@@ -3068,15 +3066,13 @@ async function initializeAI() {
     }
 }
 
-// Handle save API key (now just shows instructions)
+// API key functions removed - API keys handled server-side only
 function handleSaveApiKey() {
-    showAlert('Please add your OpenAI API key to the .env file on the server and restart.', 'info');
-    settingsModal.classList.add('hidden');
+    // No longer used - API keys are in .env
 }
 
-// Handle clear API key
 function handleClearApiKey() {
-    showAlert('To disable AI, remove the OPENAI_API_KEY from .env and restart the server.', 'info');
+    // No longer used - API keys are in .env
 }
 
 // Generate AI suggestions after file upload

@@ -113,6 +113,15 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+// Provide Supabase config to frontend (only URL and anon key - NOT service role key)
+app.get('/api/config', (req, res) => {
+    res.json({
+        supabaseUrl: process.env.SUPABASE_URL || '',
+        supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
+        authEnabled: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY)
+    });
+});
+
 // Generate AI suggestions
 app.post('/api/suggestions', async (req, res) => {
     try {

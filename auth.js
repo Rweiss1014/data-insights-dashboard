@@ -2,19 +2,35 @@
 // Auth & Dashboard Persistence Module
 // =============================================
 
-// Supabase configuration - REPLACE THESE WITH YOUR VALUES
-const SUPABASE_URL = window.SUPABASE_URL || '';  // Set in environment or here
-const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || '';  // Set in environment or here
-
-// Initialize Supabase client (only if configured)
+// Initialize Supabase client (fetched from server)
 let supabaseClient = null;
 let currentUser = null;
 
-if (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase) {
-    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    console.log('Supabase client initialized');
-} else {
-    console.log('Supabase not configured - auth features disabled');
+// Fetch config from server and initialize Supabase
+async function initSupabase() {
+    try {
+        console.log('Fetching config from server...');
+        const response = await fetch('/api/config');
+        const config = await response.json();
+        console.log('Config received:', { authEnabled: config.authEnabled, hasUrl: !!config.supabaseUrl, hasKey: !!config.supabaseAnonKey });
+
+        if (!window.supabase) {
+            console.error('Supabase library not loaded');
+            return false;
+        }
+
+        if (config.authEnabled && config.supabaseUrl && config.supabaseAnonKey) {
+            supabaseClient = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
+            console.log('Supabase client initialized successfully');
+            return true;
+        } else {
+            console.log('Supabase not configured - auth features disabled', config);
+            return false;
+        }
+    } catch (err) {
+        console.error('Failed to fetch config:', err);
+        return false;
+    }
 }
 
 // DOM Elements
@@ -49,11 +65,19 @@ const saveDashboardConfirm = document.getElementById('save-dashboard-confirm');
 // =============================================
 
 async function initAuth() {
-    if (!supabaseClient) {
+    // Initialize Supabase first
+    const initialized = await initSupabase();
+
+    if (!initialized || !supabaseClient) {
         // Hide auth-related buttons if Supabase isn't configured
+        console.log('Hiding auth button - Supabase not initialized');
         if (authBtn) authBtn.style.display = 'none';
         return;
     }
+
+    // Make sure auth button is visible when Supabase IS configured
+    console.log('Supabase initialized - showing auth button');
+    if (authBtn) authBtn.style.display = '';
 
     // Check for existing session
     const { data: { session } } = await supabaseClient.auth.getSession();

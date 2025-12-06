@@ -33,7 +33,6 @@
                     💾 Save
                 </button>
                 <button id="presentation-mode-btn" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 rounded text-sm font-semibold text-white transition">Present</button>
-                <button id="settings-btn" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 rounded text-sm font-semibold text-gray-700 transition">⚙️ Settings</button>
                 <!-- Auth button -->
                 <button id="auth-btn" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-900 rounded text-sm font-semibold text-white transition">
                     Sign In
@@ -302,45 +301,6 @@
         <div id="data-table-panel"></div>
         <button id="toggle-table"></button>
         <div id="pivot-container"></div>
-    </div>
-
-    <!-- Settings Modal -->
-    <div id="settings-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
-            <div class="flex items-center justify-between mb-4">
-                <h3 class="text-xl font-bold text-gray-800">🤖 AI Settings</h3>
-                <button id="close-settings" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
-            </div>
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-2">OpenAI API Key</label>
-                    <input type="password" id="openai-api-key" placeholder="sk-..."
-                        class="w-full px-3 py-2 border border-gray-300 rounded focus:border-blue-500 focus:ring-2 focus:ring-blue-200 text-sm">
-                    <p class="text-xs text-gray-500 mt-1">Your key is stored locally and never sent anywhere except OpenAI</p>
-                </div>
-                <div class="bg-blue-50 border border-blue-200 rounded p-3 text-sm">
-                    <p class="font-semibold text-blue-900 mb-1">💡 Why do you need this?</p>
-                    <ul class="text-blue-800 space-y-1 text-xs list-disc list-inside">
-                        <li>AI suggests relevant queries for your data</li>
-                        <li>Conversational refinement ("make it bigger", "add January")</li>
-                        <li>Smart chart type selection</li>
-                        <li>Multi-query intelligence</li>
-                    </ul>
-                </div>
-                <div class="bg-gray-50 border border-gray-200 rounded p-3 text-xs text-gray-600">
-                    <p><strong>Cost:</strong> ~$0.002 per query (500 queries ≈ $1)</p>
-                    <p class="mt-1"><strong>Get your key:</strong> <a href="https://platform.openai.com/api-keys" target="_blank" class="text-blue-600 hover:underline">platform.openai.com/api-keys</a></p>
-                </div>
-                <div class="flex gap-2">
-                    <button id="save-api-key" class="flex-1 bg-blue-600 text-white rounded py-2 font-semibold hover:bg-blue-700 transition">
-                        Save & Enable AI
-                    </button>
-                    <button id="clear-api-key" class="px-4 bg-gray-200 text-gray-700 rounded font-semibold hover:bg-gray-300 transition">
-                        Clear
-                    </button>
-                </div>
-            </div>
-        </div>
     </div>
 
     <!-- Auth Modal -->
