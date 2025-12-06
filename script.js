@@ -1328,6 +1328,31 @@ function renderChart(pivotResult, config) {
     currentChart = new Chart(ctx, chartData);
 }
 
+// Calculate optimal chart height based on data size and chart type
+function calculateChartHeight(rowCount, chartType, isHorizontal = false) {
+    const baseHeight = 220;
+    const minHeight = 180;
+    const maxHeight = 600;
+
+    if (chartType === 'pie' || chartType === 'doughnut') {
+        // Pie charts need more height for legend when many items
+        if (rowCount > 10) return Math.min(350 + (rowCount - 10) * 8, maxHeight);
+        if (rowCount > 6) return 300;
+        return baseHeight;
+    }
+
+    if (isHorizontal || chartType === 'horizontalBar') {
+        // Horizontal bars need height per bar
+        const heightPerBar = 35;
+        return Math.max(minHeight, Math.min(rowCount * heightPerBar + 60, maxHeight));
+    }
+
+    // Vertical bar/line charts - increase height if many categories
+    if (rowCount > 20) return Math.min(300 + (rowCount - 20) * 5, maxHeight);
+    if (rowCount > 10) return 280;
+    return baseHeight;
+}
+
 // Prepare chart data for Chart.js with polished styling
 function prepareChartData(pivotResult, config) {
     const { rowKeys, colKeys, getValue } = pivotResult;
@@ -2672,6 +2697,12 @@ function renderChartInCard(cardId, pivotResult, config) {
         return;
     }
 
+    // Auto-resize container based on data size
+    const rowCount = pivotResult.rowKeys ? pivotResult.rowKeys.length : 0;
+    const isHorizontal = config.chartType === 'horizontalBar';
+    const optimalHeight = calculateChartHeight(rowCount, config.chartType, isHorizontal);
+    container.style.height = `${optimalHeight}px`;
+
     // Reset canvas
     container.innerHTML = `<canvas id="${cardId}-chart"></canvas>`;
     const canvas = document.getElementById(`${cardId}-chart`);
@@ -2935,6 +2966,11 @@ function renderPinnedCharts() {
             ? `${aggWord} ${valueField} by ${rowField} & ${colField}`
             : `${aggWord} ${valueField} by ${rowField}`;
 
+        // Calculate optimal height for this chart
+        const rowCount = pivotResult.rowKeys ? pivotResult.rowKeys.length : 0;
+        const isHorizontal = chartType === 'horizontalBar';
+        const optimalHeight = calculateChartHeight(rowCount, chartType, isHorizontal);
+
         card.innerHTML = `
             <div class="flex items-start justify-between mb-3">
                 <div class="flex-1">
@@ -2943,7 +2979,7 @@ function renderPinnedCharts() {
                 </div>
                 <button class="unpin-btn text-red-500 hover:text-red-700 font-bold text-lg leading-none" data-id="${id}">&times;</button>
             </div>
-            <div class="chart-wrapper" style="height: 250px; position: relative;">
+            <div class="chart-wrapper" style="height: ${optimalHeight}px; position: relative;">
                 <canvas id="canvas-${id}"></canvas>
             </div>
         `;
@@ -3713,6 +3749,17 @@ function renderDashboardChart(chartId) {
     // Apply topN if specified
     if (chart.config.topN && pivotResult.rowKeys && pivotResult.rowKeys.length > chart.config.topN) {
         pivotResult.rowKeys = pivotResult.rowKeys.slice(0, chart.config.topN);
+    }
+
+    // Auto-resize chart container based on data size
+    const rowCount = pivotResult.rowKeys ? pivotResult.rowKeys.length : 0;
+    const isHorizontal = chart.config.chartType === 'horizontalBar';
+    const optimalHeight = calculateChartHeight(rowCount, chart.config.chartType, isHorizontal);
+
+    // Update the chart card body height
+    const cardBody = canvas.closest('.chart-card-body');
+    if (cardBody) {
+        cardBody.style.height = `${optimalHeight}px`;
     }
 
     // Prepare chart data
