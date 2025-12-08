@@ -4071,13 +4071,25 @@ function addSuggestionChips(suggestions) {
         chip.className = 'chat-suggestion-chip';
         chip.textContent = suggestion;
         chip.dataset.nlQuery = suggestion;
-        chip.addEventListener('click', () => {
+        chip.addEventListener('click', async () => {
             console.log('[Chat] Suggestion chip clicked:', suggestion);
-            // Set chat input and trigger query
-            if (chatInput) {
-                chatInput.value = suggestion;
+            try {
+                // Visual feedback
+                chip.classList.add('opacity-50');
+                chip.textContent = 'Loading...';
+
+                // Set chat input and trigger query
+                if (chatInput) {
+                    chatInput.value = suggestion;
+                }
+                await handleUserQuery();
+            } catch (error) {
+                console.error('[Chat] Error executing suggestion:', error);
+                showAlert('Error: ' + error.message, 'error');
+            } finally {
+                chip.classList.remove('opacity-50');
+                chip.textContent = suggestion;
             }
-            handleUserQuery();
         });
         chipsContainer.appendChild(chip);
     });
