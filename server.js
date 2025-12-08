@@ -179,11 +179,23 @@ app.post('/api/interpret-query', async (req, res) => {
         const systemPrompt = `You are a data analytics assistant that interprets natural language queries about data.
 
 CRITICAL RULES:
-1. FILTERS: If the user mentions specific items (products, regions, people), include them in filters
-2. "ALL" MEANS NO FILTER: If user says "all products", "all cookies", "every region", "each salesperson" - do NOT add a filter for that column. Just group by it.
+1. FILTERS vs GROUPING - THIS IS CRITICAL:
+   - "per X", "by X", "for each X", "across X" → GROUP BY X (set rowField = X column), do NOT filter
+   - "capacity per role" → rowField: "Role", NO filter on Role
+   - "hours by person" → rowField: "Name" or "Person", NO filter
+   - "sales per region" → rowField: "Region", NO filter
+   - Only FILTER when user mentions a SPECIFIC VALUE like "for John" or "in North region"
+2. FILTERS: Only add filters when user mentions SPECIFIC VALUES (names, products, dates)
+   - "hours for John" → filter to John
+   - "hours per person" → group by person (NO filter!)
+4. "ALL" MEANS NO FILTER: If user says "all products", "all cookies", "every region", "each salesperson" - do NOT add a filter for that column. Just group by it.
    - "all cookies by salesperson" → filters: [], rowField: "Salesperson" (no Product filter!)
    - "compare all products" → filters: [], rowField: "Product"
-3. SINGLE TOTAL (NO GROUPING):
+5. SYNONYMS - Map common terms to actual column names:
+   - "capacity" = Available Hours (or similar column)
+   - "utilization" = Allocated Hours / Available Hours
+   - "workload" = Allocated Hours
+6. SINGLE TOTAL (NO GROUPING):
    - "total for November", "what's the total", "sum of all sales" → set rowField: null and singleValue: true
    - When user wants ONE number (not broken down by anything), use singleValue: true
    - DO NOT group by date/day when user just wants a total
@@ -276,6 +288,28 @@ Query: "compare quantity sold of all cookies across salespersons"
   "chartType": "bar"
 }
 (Note: "all cookies" means NO filter - show all products grouped by Salesperson)
+
+Query: "capacity per role" or "available hours by role"
+→ {
+  "filters": [],
+  "rowField": "Role",
+  "colField": "",
+  "valueField": "Available Hours",
+  "aggType": "sum",
+  "chartType": "bar"
+}
+(Note: "per role" means GROUP BY Role, NOT filter to a specific role. "capacity" = Available Hours)
+
+Query: "hours per person" or "workload by name"
+→ {
+  "filters": [],
+  "rowField": "Name",
+  "colField": "",
+  "valueField": "Hours",
+  "aggType": "sum",
+  "chartType": "bar"
+}
+(Note: "per person" = group by Name/Person column, no filter!)
 
 Query: "which salesperson has the highest quantity sold in the first quarter"
 → {
