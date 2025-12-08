@@ -195,8 +195,12 @@ CRITICAL RULES:
    - "capacity" = Available Hours (or similar column)
    - "workload" = Allocated Hours
 6. CALCULATED METRICS - For ratios/percentages:
-   - "utilization" = requires calculatedField: { formula: "divide", numerator: "Allocated Hours", denominator: "Available Hours", asPercent: true }
-   - When user asks for utilization, set calculatedField with the formula, and set valueField to null
+   - "utilization" = requires calculatedField: { formula: "divide", numerator: "[allocated column]", denominator: "[available column]", asPercent: true }
+   - IMPORTANT: Use the ACTUAL column names from the Available columns list! Find columns containing "allocated", "used", "actual" for numerator, and "available", "capacity", "total" for denominator
+   - Example column mappings:
+     * "Allocated Hours" or "Hours Allocated" or "Used Hours" → numerator
+     * "Available Hours" or "Capacity" or "Available Hours/Week" → denominator
+   - When user asks for utilization, efficiency, or any ratio, set calculatedField with actual column names
    - The system will calculate (numerator / denominator) for each group
 6. SINGLE TOTAL (NO GROUPING):
    - "total for November", "what's the total", "sum of all sales" → set rowField: null and singleValue: true
@@ -328,7 +332,7 @@ Query: "utilization per week" or "utilization by period"
   "aggType": "sum",
   "chartType": "bar"
 }
-(Note: utilization = Allocated/Available as percentage. Look for Period/Week column to group by.)
+(Note: utilization = Allocated/Available. USE ACTUAL COLUMN NAMES from the data! Look at Available columns list and find the matching names.)
 
 Query: "utilization per role" or "show utilization by role"
 → {
@@ -340,6 +344,7 @@ Query: "utilization per role" or "show utilization by role"
   "aggType": "sum",
   "chartType": "bar"
 }
+(Note: Replace "Allocated Hours" and "Available Hours" with the ACTUAL column names from the user's data!)
 
 Query: "which salesperson has the highest quantity sold in the first quarter"
 → {
