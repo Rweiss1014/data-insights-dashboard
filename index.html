@@ -9,6 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="pattern-recognition.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
@@ -32,6 +33,21 @@
                 <button id="save-dashboard-btn" class="hidden px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-sm font-semibold text-white transition">
                     💾 Save
                 </button>
+                <!-- Color Theme Selector -->
+                <div class="relative">
+                    <select id="color-theme-select" class="px-2 py-1.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded text-sm font-medium text-gray-700 cursor-pointer transition appearance-none pr-7">
+                        <option value="default">🎨 Default</option>
+                        <option value="ocean">🌊 Ocean</option>
+                        <option value="sunset">🌅 Sunset</option>
+                        <option value="forest">🌲 Forest</option>
+                        <option value="berry">🫐 Berry</option>
+                        <option value="earth">🏜️ Earth</option>
+                        <option value="neon">💜 Neon</option>
+                        <option value="pastel">🍬 Pastel</option>
+                        <option value="monochrome">⬛ Mono</option>
+                        <option value="corporate">💼 Corporate</option>
+                    </select>
+                </div>
                 <button id="presentation-mode-btn" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 rounded text-sm font-semibold text-white transition">Present</button>
                 <!-- Auth button -->
                 <button id="auth-btn" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-900 rounded text-sm font-semibold text-white transition">
@@ -201,37 +217,37 @@
                             </div>
                         </div>
 
-                        <!-- Enhanced Filter Bar -->
+                        <!-- Enhanced Filter Bar - Dynamically populated based on data -->
                         <div id="dashboard-filters" class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 mb-6">
                             <div class="flex flex-wrap gap-4 items-end">
-                                <div class="flex-1 min-w-[120px]">
-                                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Quarter</label>
+                                <div class="filter-group flex-1 min-w-[120px]">
+                                    <label id="label-quarter" class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Quarter</label>
                                     <select id="filter-quarter" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200">
                                         <option value="">All Quarters</option>
                                     </select>
                                 </div>
-                                <div class="flex-1 min-w-[120px]">
-                                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Month</label>
+                                <div class="filter-group flex-1 min-w-[120px]">
+                                    <label id="label-month" class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Month</label>
                                     <select id="filter-month" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200">
                                         <option value="">All Months</option>
                                     </select>
                                 </div>
-                                <div class="flex-1 min-w-[120px]">
-                                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Product</label>
+                                <div class="filter-group flex-1 min-w-[120px]">
+                                    <label id="label-product" class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Name</label>
                                     <select id="filter-product" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200">
-                                        <option value="">All Products</option>
+                                        <option value="">All Names</option>
                                     </select>
                                 </div>
-                                <div class="flex-1 min-w-[120px]">
-                                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Salesperson</label>
+                                <div class="filter-group flex-1 min-w-[120px]">
+                                    <label id="label-salesperson" class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Role</label>
                                     <select id="filter-salesperson" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200">
-                                        <option value="">All Salespersons</option>
+                                        <option value="">All Roles</option>
                                     </select>
                                 </div>
-                                <div class="flex-1 min-w-[120px]">
-                                    <label class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Region</label>
+                                <div class="filter-group flex-1 min-w-[120px]">
+                                    <label id="label-region" class="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Location</label>
                                     <select id="filter-region" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200">
-                                        <option value="">All Regions</option>
+                                        <option value="">All Locations</option>
                                     </select>
                                 </div>
                                 <button id="clear-dashboard-filters" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-red-600 transition">
@@ -384,6 +400,70 @@
                 <button id="save-dashboard-confirm" class="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition">
                     Save Dashboard
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slideshow Modal (for presenting charts one at a time) -->
+    <div id="slideshow-modal" class="hidden fixed inset-0 bg-black bg-opacity-95 z-50 flex flex-col">
+        <!-- Slideshow Header with filters -->
+        <div id="slideshow-header" class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <button id="slideshow-exit" class="flex items-center gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                    Exit
+                </button>
+                <span id="slideshow-counter" class="text-sm text-gray-600 font-medium">1 / 5</span>
+                <span id="slideshow-title" class="text-lg font-semibold text-gray-800"></span>
+            </div>
+            <div id="slideshow-filters" class="flex items-center gap-3">
+                <!-- Filters will be cloned here from slicer panel -->
+            </div>
+        </div>
+
+        <!-- Slideshow Content -->
+        <div class="flex-1 flex items-center justify-center relative p-8">
+            <!-- Previous Button -->
+            <button id="slideshow-prev" class="absolute left-4 top-1/2 -translate-y-1/2 w-14 h-14 bg-white bg-opacity-90 hover:bg-opacity-100 rounded-full shadow-lg flex items-center justify-center text-gray-700 hover:text-indigo-600 transition z-10">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                </svg>
+            </button>
+
+            <!-- Chart Container -->
+            <div id="slideshow-chart-container" class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl mx-16 overflow-hidden">
+                <!-- Chart Title Header -->
+                <div class="px-6 py-4 border-b border-gray-100">
+                    <h2 id="slideshow-chart-title" class="text-2xl font-bold text-gray-800"></h2>
+                    <p id="slideshow-chart-subtitle" class="text-sm text-gray-500 mt-1"></p>
+                </div>
+                <!-- Chart Area -->
+                <div class="p-6">
+                    <div id="slideshow-chart-wrapper" class="h-[55vh] relative">
+                        <canvas id="slideshow-canvas"></canvas>
+                    </div>
+                </div>
+                <!-- Active Filters Display -->
+                <div id="slideshow-active-filters" class="px-6 py-3 bg-gray-50 border-t border-gray-100 hidden">
+                    <span class="text-xs text-gray-500">Active Filters: </span>
+                    <span id="slideshow-filter-tags" class="text-xs font-medium text-indigo-600"></span>
+                </div>
+            </div>
+
+            <!-- Next Button -->
+            <button id="slideshow-next" class="absolute right-4 top-1/2 -translate-y-1/2 w-14 h-14 bg-white bg-opacity-90 hover:bg-opacity-100 rounded-full shadow-lg flex items-center justify-center text-gray-700 hover:text-indigo-600 transition z-10">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Slideshow Footer with thumbnails -->
+        <div id="slideshow-footer" class="bg-white border-t border-gray-200 px-6 py-3">
+            <div id="slideshow-thumbnails" class="flex items-center justify-center gap-2 overflow-x-auto">
+                <!-- Thumbnail indicators will be added here -->
             </div>
         </div>
     </div>

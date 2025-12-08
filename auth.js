@@ -11,12 +11,19 @@ async function initSupabase() {
     try {
         console.log('Fetching config from server...');
         const response = await fetch('/api/config');
+
+        if (!response.ok) {
+            console.error('Config fetch failed with status:', response.status);
+            return false;
+        }
+
         const config = await response.json();
         console.log('Config received:', { authEnabled: config.authEnabled, hasUrl: !!config.supabaseUrl, hasKey: !!config.supabaseAnonKey });
 
         if (!window.supabase) {
-            console.error('Supabase library not loaded');
-            return false;
+            console.error('Supabase library not loaded - window.supabase is:', window.supabase);
+            // Still return true if auth is enabled - button should show even if library fails
+            return config.authEnabled;
         }
 
         if (config.authEnabled && config.supabaseUrl && config.supabaseAnonKey) {
@@ -68,16 +75,22 @@ async function initAuth() {
     // Initialize Supabase first
     const initialized = await initSupabase();
 
-    if (!initialized || !supabaseClient) {
-        // Hide auth-related buttons if Supabase isn't configured
-        console.log('Hiding auth button - Supabase not initialized');
+    if (!initialized) {
+        // Hide auth-related buttons if Supabase isn't configured on server
+        console.log('Hiding auth button - auth not enabled on server');
         if (authBtn) authBtn.style.display = 'none';
         return;
     }
 
-    // Make sure auth button is visible when Supabase IS configured
-    console.log('Supabase initialized - showing auth button');
+    // Make sure auth button is visible when auth IS enabled
+    console.log('Auth enabled - showing auth button');
     if (authBtn) authBtn.style.display = '';
+
+    if (!supabaseClient) {
+        // Auth is enabled but client failed to initialize - button is visible but will show error on click
+        console.warn('Supabase client not initialized - auth button visible but may not work');
+        return;
+    }
 
     // Check for existing session
     const { data: { session } } = await supabaseClient.auth.getSession();

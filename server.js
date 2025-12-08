@@ -4,6 +4,7 @@ const cors = require('cors');
 const OpenAI = require('openai');
 const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
+const PatternRecognition = require('./pattern-recognition');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -199,6 +200,12 @@ CRITICAL RULES:
    - "fourth quarter", "Q4" → quarterFilter: "Q4"
 6. AGGREGATION: Default to "sum" for quantities/amounts. Use "count" only for counting rows.
 7. IMPORTANT: When user asks "which X has highest Y in [time period]", the rowField should be X (not the time period). The time period is a FILTER.
+8. FUZZY/PARTIAL MATCHING: When filtering, use partial matching for text values. The filter value should match what appears in the SAMPLE DATA, not necessarily the user's exact words:
+   - User says "August" but data has "Aug 2025" → use filter value "Aug" (partial match)
+   - User says "January 2025" but data has "Jan 2025" → use filter value "Jan 2025"
+   - User says "Development hours" but data has "Project/ Design Hours" → use the EXACT column name from the data
+   - ALWAYS look at the sample data to find the actual values/column names to use
+9. COLUMN NAME MATCHING: Use EXACT column names from the Available columns list. If user says "available hours" but column is "Available Hours/Week", use "Available Hours/Week".
 
 Given a user's question and their data structure, extract:
 1. filters: Array of {column, value} - items to filter the data BY
@@ -966,6 +973,405 @@ app.delete('/api/sessions/:id', requireAuth, async (req, res) => {
     } catch (err) {
         console.error('Error deleting session:', err);
         res.status(500).json({ error: 'Failed to delete session' });
+    }
+});
+
+// =============================================
+// EXCEL PATTERN LIBRARY API (Enhanced with learning)
+// =============================================
+
+// Get all patterns (for matching against uploaded files)
+app.get('/api/patterns', async (req, res) => {
+    if (!supabase) {
+        return res.json({ patterns: [] });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('excel_patterns')
+            .select('*')
+            .order('success_count', { ascending: false });
+
+        if (error) throw error;
+
+        res.json({ patterns: data || [] });
+    } catch (err) {
+        console.error('Error fetching patterns:', err);
+        res.json({ patterns: [] });
+    }
+});
+
+// Analyze file structure and get recommendations (no database required)
+app.post('/api/patterns/analyze', (req, res) => {
+    const { sheetData } = req.body;
+
+    if (!sheetData) {
+        return res.status(400).json({ error: 'sheetData required' });
+    }
+
+    try {
+        // Create fingerprint using pattern recognition
+        const fingerprints = {};
+        for (const [sheetName, rawData] of Object.entries(sheetData)) {
+            fingerprints[sheetName] = PatternRecognition.createSheetFingerprint(sheetName, rawData);
+        }
+
+        // Find best data sheet
+        const allSheets = Object.values(fingerprints);
+        const bestSheet = PatternRecognition.findBestDataSheet({ sheets: allSheets });
+
+        // Get transformation recommendation
+        const recommendation = bestSheet
+            ? PatternRecognition.recommendTransformation(bestSheet)
+            : { type: 'none', confidence: 0 };
+
+        res.json({
+            fingerprints,
+            bestDataSheet: bestSheet?.name || null,
+            recommendation,
+            sheetTypes: Object.fromEntries(
+                Object.entries(fingerprints).map(([name, fp]) => [name, fp.sheetType])
+            )
+        });
+    } catch (err) {
+        console.error('Error analyzing file:', err);
+        res.status(500).json({ error: 'Failed to analyze file structure' });
+    }
+});
+
+// Find matching pattern using semantic matching
+app.post('/api/patterns/match', async (req, res) => {
+    const { columnNames, sheetFingerprint, sheetData } = req.body;
+
+    if (!columnNames || !Array.isArray(columnNames)) {
+        return res.status(400).json({ error: 'columnNames array required' });
+    }
+
+    try {
+        // First, do local analysis using PatternRecognition
+        let localAnalysis = null;
+        if (sheetData) {
+            const fp = PatternRecognition.createSheetFingerprint('sheet', sheetData);
+            localAnalysis = {
+                semanticProfile: fp.semanticProfile,
+                hasRepeatingColumns: fp.structure.hasRepeatingColumns,
+                repeatingPattern: fp.structure.repeatingPattern,
+                recommendation: PatternRecognition.recommendTransformation(fp)
+            };
+        }
+
+        // If no database, return local analysis only
+        if (!supabase) {
+            return res.json({
+                match: null,
+                localAnalysis,
+                message: 'Database not configured - using local analysis only'
+            });
+        }
+
+        // Get stored patterns
+        const { data: patterns, error } = await supabase
+            .from('excel_patterns')
+            .select('*');
+
+        if (error) throw error;
+
+        // Find best match using semantic matching
+        let bestMatch = null;
+        let bestScore = 0;
+
+        // Normalize input column names
+        const normalizedInput = columnNames.map(c =>
+            PatternRecognition.normalizeColumnName(c)
+        );
+        const inputSemantics = columnNames.map(c =>
+            PatternRecognition.detectSemanticType(c)
+        ).filter(Boolean);
+
+        for (const pattern of patterns || []) {
+            const signature = pattern.header_signature || [];
+            const patternSemantics = pattern.semantic_profile || {};
+
+            let score = 0;
+            let maxScore = 0;
+
+            // Exact column name matching (normalized)
+            const normalizedSignature = signature.map(c =>
+                PatternRecognition.normalizeColumnName(c)
+            );
+            for (const sigCol of normalizedSignature) {
+                maxScore += 2;
+                if (normalizedInput.includes(sigCol)) {
+                    score += 2;
+                }
+            }
+
+            // Semantic type matching
+            const patternSemanticTypes = Object.keys(patternSemantics);
+            for (const semType of patternSemanticTypes) {
+                maxScore += 1;
+                if (inputSemantics.includes(semType)) {
+                    score += 1;
+                }
+            }
+
+            // Structure matching
+            if (pattern.has_repeating_columns !== undefined && localAnalysis) {
+                maxScore += 3;
+                if (pattern.has_repeating_columns === localAnalysis.hasRepeatingColumns) {
+                    score += 3;
+                }
+            }
+
+            const finalScore = maxScore > 0 ? score / maxScore : 0;
+
+            // Weight by success rate
+            const successRate = pattern.success_count > 0
+                ? pattern.success_count / (pattern.success_count + (pattern.failure_count || 0))
+                : 0.5;
+            const weightedScore = finalScore * (0.7 + 0.3 * successRate);
+
+            if (weightedScore > bestScore && finalScore >= 0.5) {
+                bestScore = weightedScore;
+                bestMatch = { ...pattern, matchScore: finalScore, weightedScore };
+            }
+        }
+
+        // Update usage count
+        if (bestMatch) {
+            await supabase
+                .from('excel_patterns')
+                .update({ usage_count: (bestMatch.usage_count || 0) + 1 })
+                .eq('id', bestMatch.id);
+        }
+
+        res.json({
+            match: bestMatch,
+            localAnalysis,
+            semanticTypes: inputSemantics
+        });
+    } catch (err) {
+        console.error('Error matching pattern:', err);
+        res.json({ match: null, error: err.message });
+    }
+});
+
+// Save a new pattern with fingerprint
+app.post('/api/patterns', optionalAuth, async (req, res) => {
+    if (!supabase) {
+        return res.status(503).json({ error: 'Database not configured' });
+    }
+
+    const {
+        name,
+        description,
+        headerSignature,
+        hasRepeatingColumns,
+        repeatingColumnNames,
+        fixedColumnNames,
+        transformationType,
+        transformationConfig,
+        semanticProfile,
+        fingerprint
+    } = req.body;
+
+    if (!name || !headerSignature || !transformationType) {
+        return res.status(400).json({ error: 'name, headerSignature, and transformationType required' });
+    }
+
+    // Build semantic profile from column names if not provided
+    let semProfile = semanticProfile;
+    if (!semProfile && headerSignature) {
+        semProfile = {};
+        headerSignature.forEach(col => {
+            const semType = PatternRecognition.detectSemanticType(col);
+            if (semType) {
+                if (!semProfile[semType]) semProfile[semType] = [];
+                semProfile[semType].push(col);
+            }
+        });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('excel_patterns')
+            .insert({
+                name,
+                description,
+                header_signature: headerSignature,
+                has_repeating_columns: hasRepeatingColumns || false,
+                repeating_column_names: repeatingColumnNames || [],
+                fixed_column_names: fixedColumnNames || [],
+                transformation_type: transformationType,
+                transformation_config: transformationConfig || {},
+                semantic_profile: semProfile || {},
+                fingerprint: fingerprint || {},
+                created_by: req.user?.id || null,
+                success_count: 0,
+                failure_count: 0
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        res.json({ pattern: data });
+    } catch (err) {
+        console.error('Error saving pattern:', err);
+        res.status(500).json({ error: 'Failed to save pattern' });
+    }
+});
+
+// Record pattern success/failure (for learning)
+app.post('/api/patterns/:id/feedback', optionalAuth, async (req, res) => {
+    if (!supabase) {
+        return res.status(503).json({ error: 'Database not configured' });
+    }
+
+    const { id } = req.params;
+    const { success, notes, correctedConfig } = req.body;
+
+    try {
+        // Get current pattern
+        const { data: pattern, error: fetchError } = await supabase
+            .from('excel_patterns')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+        if (fetchError) throw fetchError;
+
+        // Update counts
+        const updates = success
+            ? { success_count: (pattern.success_count || 0) + 1 }
+            : { failure_count: (pattern.failure_count || 0) + 1 };
+
+        // If correction provided, update the config
+        if (correctedConfig) {
+            updates.transformation_config = {
+                ...pattern.transformation_config,
+                ...correctedConfig
+            };
+            updates.last_corrected_at = new Date().toISOString();
+        }
+
+        if (notes) {
+            updates.notes = [...(pattern.notes || []), {
+                timestamp: new Date().toISOString(),
+                success,
+                note: notes
+            }];
+        }
+
+        const { error: updateError } = await supabase
+            .from('excel_patterns')
+            .update(updates)
+            .eq('id', id);
+
+        if (updateError) throw updateError;
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error recording feedback:', err);
+        res.status(500).json({ error: 'Failed to record feedback' });
+    }
+});
+
+// Learn pattern from successful transformation
+app.post('/api/patterns/learn', optionalAuth, async (req, res) => {
+    if (!supabase) {
+        return res.status(503).json({ error: 'Database not configured' });
+    }
+
+    const {
+        sheetData,
+        transformationApplied,
+        resultRowCount,
+        userQuery,
+        wasSuccessful
+    } = req.body;
+
+    if (!sheetData || !transformationApplied) {
+        return res.status(400).json({ error: 'sheetData and transformationApplied required' });
+    }
+
+    try {
+        // Create fingerprint
+        const fingerprint = PatternRecognition.createSheetFingerprint('learned', sheetData);
+
+        // Check if similar pattern exists
+        const { data: existingPatterns } = await supabase
+            .from('excel_patterns')
+            .select('*');
+
+        let similarPattern = null;
+        let highestSimilarity = 0;
+
+        for (const existing of existingPatterns || []) {
+            if (existing.fingerprint) {
+                const similarity = PatternRecognition.calculateFingerprintSimilarity(
+                    fingerprint,
+                    existing.fingerprint
+                );
+                if (similarity > highestSimilarity && similarity > 0.7) {
+                    highestSimilarity = similarity;
+                    similarPattern = existing;
+                }
+            }
+        }
+
+        if (similarPattern) {
+            // Update existing pattern
+            const updates = wasSuccessful
+                ? { success_count: (similarPattern.success_count || 0) + 1 }
+                : { failure_count: (similarPattern.failure_count || 0) + 1 };
+
+            await supabase
+                .from('excel_patterns')
+                .update(updates)
+                .eq('id', similarPattern.id);
+
+            res.json({
+                action: 'updated',
+                patternId: similarPattern.id,
+                similarity: highestSimilarity
+            });
+        } else if (wasSuccessful) {
+            // Create new pattern
+            const columnNames = fingerprint.columns.map(c => c.name);
+            const { data: newPattern, error } = await supabase
+                .from('excel_patterns')
+                .insert({
+                    name: `Auto-learned pattern ${new Date().toISOString().split('T')[0]}`,
+                    description: `Automatically learned from successful transformation. Query: "${userQuery || 'N/A'}"`,
+                    header_signature: columnNames,
+                    has_repeating_columns: fingerprint.structure.hasRepeatingColumns,
+                    repeating_column_names: fingerprint.structure.repeatingPattern?.repeatingColumns || [],
+                    fixed_column_names: columnNames.slice(0, fingerprint.structure.repeatingPattern?.fixedColumnCount || 0),
+                    transformation_type: transformationApplied,
+                    transformation_config: fingerprint.structure.repeatingPattern || {},
+                    semantic_profile: fingerprint.semanticProfile,
+                    fingerprint: fingerprint,
+                    success_count: 1,
+                    failure_count: 0,
+                    created_by: req.user?.id || null,
+                    auto_learned: true
+                })
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            res.json({
+                action: 'created',
+                patternId: newPattern.id
+            });
+        } else {
+            res.json({ action: 'none', reason: 'Unsuccessful transformation not saved' });
+        }
+    } catch (err) {
+        console.error('Error learning pattern:', err);
+        res.status(500).json({ error: 'Failed to learn pattern' });
     }
 });
 

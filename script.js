@@ -11,6 +11,430 @@ let lastPivotMeta = null;
 let currentFilters = []; // NL-inferred filters: Array<{ column: string, values: string[] }>
 let pivotChart = null; // Chart.js instance for the pivot result card
 
+// =============================================
+// Wide-to-Long Data Transformation
+// Handles spreadsheets with repeating column groups (e.g., weekly data)
+// =============================================
+
+function transformWideToLong(rawData, sheetName) {
+    if (!rawData || rawData.length < 2) return null;
+
+    // Find the header row (usually row 1, but check for row with most non-null values)
+    let headerRowIndex = 0;
+    let maxNonNull = 0;
+    for (let i = 0; i < Math.min(5, rawData.length); i++) {
+        const nonNullCount = (rawData[i] || []).filter(v => v != null && v !== '').length;
+        if (nonNullCount > maxNonNull) {
+            maxNonNull = nonNullCount;
+            headerRowIndex = i;
+        }
+    }
+
+    const headerRow = rawData[headerRowIndex] || [];
+    if (headerRow.length < 10) return null; // Not wide enough to be repeating
+
+    // Detect repeating column pattern
+    const pattern = detectRepeatingPattern(headerRow);
+    if (!pattern) return null;
+
+    console.log(`[Transform] Detected repeating pattern:`, pattern);
+
+    // Get the date/period row (usually row 0 for this type of spreadsheet)
+    const dateRow = headerRowIndex > 0 ? rawData[0] : null;
+
+    // Transform the data
+    const transformedRows = [];
+    const fixedCols = pattern.fixedColumns;
+    const repeatCols = pattern.repeatingColumns;
+    const repeatCount = pattern.repeatCount;
+
+    // Process each data row
+    for (let rowIdx = headerRowIndex + 1; rowIdx < rawData.length; rowIdx++) {
+        const row = rawData[rowIdx];
+        if (!row || row.length === 0) continue;
+
+        // Skip rows that appear to be empty or notes
+        const firstVal = row[0];
+        if (firstVal == null || firstVal === '') continue;
+
+        // Get fixed column values
+        const fixedValues = {};
+        fixedCols.forEach((colName, idx) => {
+            fixedValues[colName] = row[idx];
+        });
+
+        // Create a row for each repeating group
+        for (let repeatIdx = 0; repeatIdx < repeatCount; repeatIdx++) {
+            const baseColIndex = fixedCols.length + (repeatIdx * repeatCols.length);
+
+            // Get the period identifier (from date row or generate)
+            let period = `Period ${repeatIdx + 1}`;
+            if (dateRow && dateRow[baseColIndex] != null) {
+                const dateVal = dateRow[baseColIndex];
+                // Convert Excel serial date to readable date
+                if (typeof dateVal === 'number' && dateVal > 40000) {
+                    const date = excelDateToJS(dateVal);
+                    period = `Week of ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+                } else if (dateVal) {
+                    period = String(dateVal);
+                }
+            }
+
+            // Expand month abbreviations for better AI matching
+            let monthName = sheetName;
+            const monthMap = {
+                'Jan': 'January', 'Feb': 'February', 'Mar': 'March', 'Apr': 'April',
+                'May': 'May', 'Jun': 'June', 'Jul': 'July', 'Aug': 'August',
+                'Sep': 'September', 'Oct': 'October', 'Nov': 'November', 'Dec': 'December'
+            };
+            Object.entries(monthMap).forEach(([abbr, full]) => {
+                if (sheetName.startsWith(abbr + ' ')) {
+                    monthName = sheetName.replace(abbr + ' ', full + ' ');
+                }
+            });
+
+            const newRow = {
+                ...fixedValues,
+                'Period': period,
+                'Month': monthName
+            };
+
+            // Add repeating column values
+            let hasData = false;
+            repeatCols.forEach((colName, colIdx) => {
+                const value = row[baseColIndex + colIdx];
+                // Clean up column names (remove duplicates like "Available Hours/Week" -> "Available Hours")
+                const cleanColName = colName.replace(/\/Week$/, '').trim();
+                newRow[cleanColName] = value;
+                if (value != null && value !== '' && value !== 0) hasData = true;
+            });
+
+            // Only add rows that have some data in the repeating columns
+            if (hasData || repeatIdx === 0) {
+                transformedRows.push(newRow);
+            }
+        }
+    }
+
+    return transformedRows.length > 0 ? transformedRows : null;
+}
+
+function detectRepeatingPattern(headerRow) {
+    // Look for repeating column names
+    const colNames = headerRow.map(h => h != null ? String(h).trim() : '');
+
+    // Normalize column names: remove trailing numbers added by Excel (e.g., "Week Of2" -> "Week Of")
+    const normalizeColName = (name) => name.replace(/\d+$/, '').trim();
+
+    // Find columns that appear multiple times (including numbered variants)
+    const colCounts = {};
+    colNames.forEach((name, idx) => {
+        if (name && name.length > 0) {
+            const normalized = normalizeColName(name);
+            if (!colCounts[normalized]) colCounts[normalized] = [];
+            colCounts[normalized].push({ idx, originalName: name });
+        }
+    });
+
+    // Find a column that repeats (like "Available Hours/Week" or "Week Of", "Week Of2", etc.)
+    let repeatingCol = null;
+    let repeatPositions = [];
+    for (const [name, entries] of Object.entries(colCounts)) {
+        if (entries.length >= 2 && entries.length <= 10) {
+            const positions = entries.map(e => e.idx);
+            // Check if positions are evenly spaced
+            const gaps = [];
+            for (let i = 1; i < positions.length; i++) {
+                gaps.push(positions[i] - positions[i - 1]);
+            }
+            const allSameGap = gaps.every(g => g === gaps[0]);
+            if (allSameGap && gaps[0] >= 3) {
+                repeatingCol = name;
+                repeatPositions = positions;
+                break;
+            }
+        }
+    }
+
+    if (!repeatingCol || repeatPositions.length < 2) return null;
+
+    const gap = repeatPositions[1] - repeatPositions[0];
+    const firstRepeatStart = repeatPositions[0];
+
+    // Fixed columns are before the first repeat
+    const fixedColumns = colNames.slice(0, firstRepeatStart).filter(n => n && n.length > 0);
+
+    // Repeating columns are the pattern that repeats (use normalized names)
+    const repeatingColumns = colNames.slice(firstRepeatStart, firstRepeatStart + gap)
+        .filter(n => n && n.length > 0)
+        .map(n => normalizeColName(n));
+
+    return {
+        fixedColumns,
+        repeatingColumns,
+        repeatCount: repeatPositions.length,
+        gap,
+        normalizeColName // Include the function for use during transformation
+    };
+}
+
+function excelDateToJS(excelDate) {
+    // Excel dates are days since 1900-01-01 (with a leap year bug)
+    const date = new Date((excelDate - 25569) * 86400 * 1000);
+    return date;
+}
+
+// Find the header row in raw data (row with most non-null string values)
+function findHeaderRow(rawData) {
+    if (!rawData || rawData.length === 0) return [];
+
+    let bestRowIndex = 0;
+    let maxStrings = 0;
+
+    for (let i = 0; i < Math.min(5, rawData.length); i++) {
+        const row = rawData[i] || [];
+        const stringCount = row.filter(v => typeof v === 'string' && v.trim().length > 0).length;
+        if (stringCount > maxStrings) {
+            maxStrings = stringCount;
+            bestRowIndex = i;
+        }
+    }
+
+    return rawData[bestRowIndex] || [];
+}
+
+// Check the pattern library for a matching pattern
+async function checkPatternLibrary(headerRow) {
+    if (!headerRow || headerRow.length === 0) return null;
+
+    try {
+        const columnNames = headerRow.filter(h => h != null && String(h).trim().length > 0).map(h => String(h).trim());
+
+        const response = await fetch(`${API_BASE_URL}/patterns/match`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ columnNames })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            return data.match;
+        }
+    } catch (err) {
+        console.log('[Pattern] Could not check pattern library:', err.message);
+    }
+
+    return null;
+}
+
+// Learn from successful data queries (called when user adds chart to dashboard)
+async function learnFromSuccess(userQuery, rowCount) {
+    if (!allRows || allRows.length === 0) return;
+
+    try {
+        // Build a sample of the data structure for learning
+        const sampleRows = allRows.slice(0, 50).map(row => {
+            // Convert to array format for pattern analysis
+            const keys = Object.keys(row).filter(k => !k.startsWith('_'));
+            return keys.map(k => row[k]);
+        });
+
+        // Get header from first row's keys
+        const headerRow = Object.keys(allRows[0]).filter(k => !k.startsWith('_'));
+
+        const response = await fetch(`${API_BASE_URL}/patterns/learn`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                sheetData: [headerRow, ...sampleRows],
+                transformationApplied: 'query',
+                resultRowCount: rowCount,
+                userQuery: userQuery,
+                wasSuccessful: true
+            })
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            if (result.action === 'created') {
+                console.log('[PatternLearning] New pattern learned from this query');
+            } else if (result.action === 'updated') {
+                console.log(`[PatternLearning] Updated existing pattern (${Math.round(result.similarity * 100)}% similar)`);
+            }
+        }
+    } catch (err) {
+        // Silent fail - learning is optional
+        console.log('[PatternLearning] Could not save learning:', err.message);
+    }
+}
+
+// Record feedback on pattern (thumbs up/down)
+async function recordPatternFeedback(patternId, wasSuccessful, notes) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/patterns/${patternId}/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                success: wasSuccessful,
+                notes: notes
+            })
+        });
+
+        if (response.ok) {
+            console.log(`[PatternFeedback] Recorded ${wasSuccessful ? 'success' : 'failure'} for pattern ${patternId}`);
+        }
+    } catch (err) {
+        console.log('[PatternFeedback] Could not record feedback:', err.message);
+    }
+}
+
+// Transform using a known pattern from the library
+function transformWideToLongWithPattern(rawData, sheetName, pattern) {
+    if (!rawData || rawData.length < 2 || !pattern) return null;
+
+    const config = pattern.transformation_config || {};
+    const headerRowIndex = config.header_row || 1;
+    const dateRowIndex = config.date_row || 0;
+
+    if (rawData.length <= headerRowIndex) return null;
+
+    const headerRow = rawData[headerRowIndex] || [];
+    const dateRow = dateRowIndex >= 0 ? rawData[dateRowIndex] : null;
+    const fixedCols = pattern.fixed_column_names || [];
+    const repeatCols = pattern.repeating_column_names || [];
+
+    if (repeatCols.length === 0) return null;
+
+    // Find where the repeating columns start
+    let repeatStartIdx = -1;
+    for (let i = 0; i < headerRow.length; i++) {
+        const colName = headerRow[i] != null ? String(headerRow[i]).trim() : '';
+        if (repeatCols.includes(colName)) {
+            repeatStartIdx = i;
+            break;
+        }
+    }
+
+    if (repeatStartIdx < 0) return null;
+
+    // Calculate repeat count
+    const gap = repeatCols.length;
+    let repeatCount = 0;
+    for (let i = repeatStartIdx; i < headerRow.length; i += gap) {
+        const colName = headerRow[i] != null ? String(headerRow[i]).trim() : '';
+        if (repeatCols.includes(colName)) {
+            repeatCount++;
+        } else {
+            break;
+        }
+    }
+
+    if (repeatCount < 2) return null;
+
+    console.log(`[Pattern Transform] Fixed: ${fixedCols.length}, Repeating: ${repeatCols.length}, Groups: ${repeatCount}`);
+
+    // Transform the data
+    const transformedRows = [];
+
+    for (let rowIdx = headerRowIndex + 1; rowIdx < rawData.length; rowIdx++) {
+        const row = rawData[rowIdx];
+        if (!row || row.length === 0) continue;
+
+        const firstVal = row[0];
+        if (firstVal == null || firstVal === '') continue;
+
+        // Get fixed column values
+        const fixedValues = {};
+        fixedCols.forEach((colName, idx) => {
+            fixedValues[colName] = row[idx];
+        });
+
+        // Create a row for each repeating group
+        for (let repeatIdx = 0; repeatIdx < repeatCount; repeatIdx++) {
+            const baseColIndex = repeatStartIdx + (repeatIdx * gap);
+
+            // Get period from date row
+            let period = `Period ${repeatIdx + 1}`;
+            if (dateRow && dateRow[baseColIndex] != null) {
+                const dateVal = dateRow[baseColIndex];
+                if (typeof dateVal === 'number' && dateVal > 40000) {
+                    const date = excelDateToJS(dateVal);
+                    const prefix = config.period_prefix || 'Week of';
+                    period = `${prefix} ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+                } else if (dateVal) {
+                    period = String(dateVal);
+                }
+            }
+
+            // Expand month abbreviations for better AI matching
+            let monthName = sheetName;
+            if (config.month_from_sheet) {
+                const monthMap = {
+                    'Jan': 'January', 'Feb': 'February', 'Mar': 'March', 'Apr': 'April',
+                    'May': 'May', 'Jun': 'June', 'Jul': 'July', 'Aug': 'August',
+                    'Sep': 'September', 'Oct': 'October', 'Nov': 'November', 'Dec': 'December'
+                };
+                Object.entries(monthMap).forEach(([abbr, full]) => {
+                    if (sheetName.startsWith(abbr + ' ')) {
+                        monthName = sheetName.replace(abbr + ' ', full + ' ');
+                    }
+                });
+            }
+
+            const newRow = {
+                ...fixedValues,
+                'Period': period,
+                'Month': config.month_from_sheet ? monthName : undefined
+            };
+
+            // Add repeating column values
+            let hasData = false;
+            repeatCols.forEach((colName, colIdx) => {
+                const value = row[baseColIndex + colIdx];
+                const cleanColName = colName.replace(/\/Week$/, '').trim();
+                newRow[cleanColName] = value;
+                if (value != null && value !== '' && value !== 0) hasData = true;
+            });
+
+            if (hasData || repeatIdx === 0) {
+                transformedRows.push(newRow);
+            }
+        }
+    }
+
+    return transformedRows.length > 0 ? transformedRows : null;
+}
+
+// Save a successful pattern to the library
+async function savePatternToLibrary(name, description, headerRow, transformConfig) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/patterns`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name,
+                description,
+                headerSignature: headerRow.filter(h => h != null).map(h => String(h).trim()),
+                hasRepeatingColumns: transformConfig.hasRepeating || false,
+                repeatingColumnNames: transformConfig.repeatingCols || [],
+                fixedColumnNames: transformConfig.fixedCols || [],
+                transformationType: transformConfig.type || 'standard',
+                transformationConfig: transformConfig.config || {}
+            })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            console.log('[Pattern] Saved new pattern:', data.pattern?.name);
+            return data.pattern;
+        }
+    } catch (err) {
+        console.log('[Pattern] Could not save pattern:', err.message);
+    }
+
+    return null;
+}
+
 // Chat-first conversation state
 let analysisCounter = 0; // Unique ID for each analysis card
 let analysisCharts = {}; // Chart.js instances keyed by cardId
@@ -267,9 +691,134 @@ async function handleFileUpload(event) {
             const arrayBuffer = await readFileAsArrayBuffer(file);
             const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
+            // Use Pattern Recognition system to analyze file structure
+            const sheetRawData = {};
+            workbook.SheetNames.forEach(sn => {
+                sheetRawData[sn] = XLSX.utils.sheet_to_json(workbook.Sheets[sn], { header: 1 });
+            });
+
+            // Analyze file structure using PatternRecognition
+            let fileAnalysis = null;
+            if (typeof PatternRecognition !== 'undefined') {
+                try {
+                    const fingerprints = {};
+                    for (const [sheetName, rawData] of Object.entries(sheetRawData)) {
+                        fingerprints[sheetName] = PatternRecognition.createSheetFingerprint(sheetName, rawData);
+                    }
+                    const allSheets = Object.values(fingerprints);
+                    const bestSheet = PatternRecognition.findBestDataSheet({ sheets: allSheets });
+                    fileAnalysis = {
+                        fingerprints,
+                        bestDataSheet: bestSheet?.name,
+                        sheetTypes: Object.fromEntries(
+                            Object.entries(fingerprints).map(([name, fp]) => [name, fp.sheetType])
+                        )
+                    };
+                    console.log('[PatternRecognition] File analysis:', fileAnalysis);
+                    console.log('[PatternRecognition] Best data sheet:', fileAnalysis.bestDataSheet);
+                    console.log('[PatternRecognition] Sheet types:', fileAnalysis.sheetTypes);
+                } catch (err) {
+                    console.warn('[PatternRecognition] Error analyzing file:', err);
+                }
+            }
+
+            // Check for database pattern match
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const sampleRaw = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+            const headerRow = findHeaderRow(sampleRaw);
+            const matchedPattern = await checkPatternLibrary(headerRow);
+
+            if (matchedPattern) {
+                console.log(`[Pattern] Matched pattern: "${matchedPattern.name}" (${Math.round(matchedPattern.matchScore * 100)}% confidence)`);
+            }
+
+            // Determine which sheets to use based on analysis
+            let useDbSheet = false;
+            let dbSheetName = null;
+
+            // Check if PatternRecognition found a database sheet
+            if (fileAnalysis && fileAnalysis.bestDataSheet) {
+                const bestType = fileAnalysis.sheetTypes[fileAnalysis.bestDataSheet];
+                if (bestType === 'database') {
+                    useDbSheet = true;
+                    dbSheetName = fileAnalysis.bestDataSheet;
+                    console.log(`[PatternRecognition] Using database sheet: "${dbSheetName}"`);
+                }
+            }
+
+            // Fallback: manual DB sheet detection
+            if (!useDbSheet) {
+                for (const sn of workbook.SheetNames) {
+                    if (sn.toLowerCase() === 'db' || sn.toLowerCase() === 'database') {
+                        const rawData = sheetRawData[sn];
+                        if (rawData.length > 50 && rawData[0] && rawData[0].length <= 20) {
+                            console.log(`[Sheet] Found clean DB sheet "${sn}" with ${rawData.length} rows`);
+                            useDbSheet = true;
+                            dbSheetName = sn;
+                            break;
+                        }
+                    }
+                }
+            }
+
             workbook.SheetNames.forEach(sheetName => {
+                // Use PatternRecognition sheet types if available
+                const sheetType = fileAnalysis?.sheetTypes?.[sheetName];
+                const skipTypes = ['template', 'dashboard', 'metadata', 'instructions', 'sparse'];
+
+                if (sheetType && skipTypes.includes(sheetType)) {
+                    console.log(`[PatternRecognition] Skipping ${sheetType} sheet: "${sheetName}"`);
+                    return;
+                }
+
+                // Fallback: manual skip patterns
+                const skipSheetPatterns = ['template', 'dashboard', 'metadata', 'instructions', 'help', 'readme', 'config', 'settings'];
+                const sheetNameLower = sheetName.toLowerCase().trim();
+                if (skipSheetPatterns.some(pattern => sheetNameLower === pattern || sheetNameLower === pattern + 's')) {
+                    console.log(`[Sheet] Skipping non-data sheet: "${sheetName}"`);
+                    return;
+                }
+
+                // If we have a DB sheet, only use that
+                if (useDbSheet) {
+                    if (sheetNameLower !== 'db' && sheetNameLower !== 'database' && sheetName !== dbSheetName) {
+                        console.log(`[Sheet] Skipping "${sheetName}" - using DB sheet instead`);
+                        return;
+                    }
+                } else {
+                    // Skip sparse DB sheets
+                    if ((sheetNameLower === 'db' || sheetNameLower === 'database') && sheetType !== 'database') {
+                        console.log(`[Sheet] Skipping sparse DB sheet: "${sheetName}"`);
+                        return;
+                    }
+                }
+
                 const worksheet = workbook.Sheets[sheetName];
-                const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+                // First, try to detect if this is a wide format with repeating columns
+                const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+                let jsonData;
+                let transformedData = null;
+
+                // Try pattern-based transformation first, then fall back to auto-detection
+                if (matchedPattern && matchedPattern.has_repeating_columns) {
+                    transformedData = transformWideToLongWithPattern(rawData, sheetName, matchedPattern);
+                }
+
+                if (!transformedData) {
+                    // Fall back to auto-detection
+                    transformedData = transformWideToLong(rawData, sheetName);
+                }
+
+                if (transformedData) {
+                    // Use transformed data
+                    jsonData = transformedData;
+                    console.log(`[Transform] Sheet "${sheetName}" transformed: ${jsonData.length} rows`);
+                } else {
+                    // Use standard parsing
+                    jsonData = XLSX.utils.sheet_to_json(worksheet);
+                }
 
                 const sheetKey = `${file.name}|${sheetName}`;
                 availableSheets.push({
@@ -422,7 +971,17 @@ function preprocessDates() {
         if (sample.length === 0) return;
 
         // Check if column name suggests a date
-        const isDateName = /date|time|month|day|year|period/i.test(col);
+        // More precise matching: column should BE a date field, not just contain date-like words
+        // e.g., "week" is a date column, but "Available Hours/Week" is not
+        const colLower = col.toLowerCase();
+        const isDateName = (
+            /^(date|time|month|day|year|period|week|quarter)$/i.test(col) ||  // Exact matches
+            /^(date|week|month|period|day)[\s_]/i.test(col) ||  // Starts with date word
+            /[\s_](date|week|month)$/i.test(col) ||  // Ends with date word
+            colLower === 'created' || colLower === 'updated' || colLower === 'timestamp' ||
+            colLower.includes('_date') || colLower.includes('date_') ||
+            colLower.startsWith('week of') || colLower.startsWith('week_of')
+        ) && !colLower.includes('hours') && !colLower.includes('amount') && !colLower.includes('total');
 
         // Check if values are Excel serial dates (numbers like 45294)
         const serialDateCount = sample.filter(v => isExcelSerialDate(v)).length;
@@ -1302,11 +1861,10 @@ function renderChart(pivotResult, config) {
     // Set chart type selector
     chartTypeSelector.value = chartType;
 
-    // Update title
-    const aggWord = aggType === 'sum' ? 'Total' : aggType === 'avg' ? 'Average' : 'Count of';
-    chartTitle.textContent = colField
-        ? `${aggWord} ${valueField} by ${rowField} and ${colField}`
-        : `${aggWord} ${valueField} by ${rowField}`;
+    // Update title using smart title generator
+    chartTitle.textContent = generateSmartChartTitle({
+        rowField, colField, valueField, aggType, filters: currentFilters, chartType
+    });
 
     // If table-only mode, hide canvas
     if (chartType === 'table') {
@@ -1632,20 +2190,70 @@ function prepareChartData(pivotResult, config) {
     };
 }
 
-// Muted, sophisticated color palette
+// Available color themes
+const colorThemes = {
+    default: {
+        name: 'Default',
+        colors: ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#14b8a6', '#f97316', '#64748b']
+    },
+    ocean: {
+        name: 'Ocean',
+        colors: ['#0077b6', '#00b4d8', '#90e0ef', '#023e8a', '#0096c7', '#48cae4', '#ade8f4', '#03045e', '#caf0f8', '#005f73']
+    },
+    sunset: {
+        name: 'Sunset',
+        colors: ['#ff6b6b', '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd', '#00d2d3', '#ff9f43', '#ee5a24', '#c8d6e5', '#576574']
+    },
+    forest: {
+        name: 'Forest',
+        colors: ['#2d6a4f', '#40916c', '#52b788', '#74c69d', '#95d5b2', '#1b4332', '#081c15', '#b7e4c7', '#d8f3dc', '#344e41']
+    },
+    berry: {
+        name: 'Berry',
+        colors: ['#7400b8', '#6930c3', '#5e60ce', '#5390d9', '#4ea8de', '#48bfe3', '#56cfe1', '#64dfdf', '#72efdd', '#80ffdb']
+    },
+    earth: {
+        name: 'Earth',
+        colors: ['#bc6c25', '#dda15e', '#606c38', '#283618', '#fefae0', '#936639', '#7f5539', '#9c6644', '#b6ad90', '#a68a64']
+    },
+    neon: {
+        name: 'Neon',
+        colors: ['#f72585', '#b5179e', '#7209b7', '#560bad', '#480ca8', '#3a0ca3', '#3f37c9', '#4361ee', '#4895ef', '#4cc9f0']
+    },
+    pastel: {
+        name: 'Pastel',
+        colors: ['#ffadad', '#ffd6a5', '#fdffb6', '#caffbf', '#9bf6ff', '#a0c4ff', '#bdb2ff', '#ffc6ff', '#fffffc', '#d4a5a5']
+    },
+    monochrome: {
+        name: 'Monochrome',
+        colors: ['#212529', '#343a40', '#495057', '#6c757d', '#adb5bd', '#ced4da', '#dee2e6', '#e9ecef', '#f8f9fa', '#495057']
+    },
+    corporate: {
+        name: 'Corporate',
+        colors: ['#1e3a8a', '#3b82f6', '#60a5fa', '#93c5fd', '#0f172a', '#334155', '#64748b', '#94a3b8', '#e2e8f0', '#0ea5e9']
+    }
+};
+
+// Current active theme
+let currentColorTheme = 'default';
+
+// Get palette based on current theme
 function getMutedPalette() {
-    return [
-        '#6366f1', // Indigo
-        '#8b5cf6', // Purple
-        '#06b6d4', // Cyan
-        '#10b981', // Emerald
-        '#f59e0b', // Amber
-        '#ef4444', // Red
-        '#ec4899', // Pink
-        '#14b8a6', // Teal
-        '#f97316', // Orange
-        '#64748b'  // Slate
-    ];
+    return colorThemes[currentColorTheme]?.colors || colorThemes.default.colors;
+}
+
+// Set color theme and re-render charts
+function setColorTheme(themeName) {
+    if (colorThemes[themeName]) {
+        currentColorTheme = themeName;
+        // Re-render all dashboard charts
+        rerenderAllDashboardCharts();
+        // Re-render slideshow chart if active
+        if (slideshowActive) {
+            renderSlideshowChart();
+        }
+        showAlert(`Theme changed to ${colorThemes[themeName].name}`, 'success');
+    }
 }
 
 // Convert hex to rgba
@@ -1826,8 +2434,34 @@ function applyFiltersToRows(rows, filters) {
 
             result = result.filter(row => {
                 const cellValue = String(row[column] || '').toLowerCase().trim();
-                // OR logic: match ANY of the values
-                const match = values.some(v => cellValue === String(v).toLowerCase().trim());
+                // OR logic: match ANY of the values (with fuzzy/partial matching)
+                const match = values.some(v => {
+                    const filterValue = String(v).toLowerCase().trim();
+                    // Exact match
+                    if (cellValue === filterValue) return true;
+                    // Partial match: filter value contained in cell value
+                    if (cellValue.includes(filterValue)) return true;
+                    // Partial match: cell value contained in filter value
+                    if (filterValue.includes(cellValue)) return true;
+                    // Month abbreviation matching: "aug" matches "august", "august 2025" matches "aug 2025"
+                    const monthAbbrevs = {
+                        'jan': 'january', 'feb': 'february', 'mar': 'march', 'apr': 'april',
+                        'may': 'may', 'jun': 'june', 'jul': 'july', 'aug': 'august',
+                        'sep': 'september', 'oct': 'october', 'nov': 'november', 'dec': 'december'
+                    };
+                    for (const [abbr, full] of Object.entries(monthAbbrevs)) {
+                        if ((cellValue.includes(abbr) && filterValue.includes(full)) ||
+                            (cellValue.includes(full) && filterValue.includes(abbr))) {
+                            // Also check year matches if present
+                            const cellYear = cellValue.match(/\d{4}/)?.[0];
+                            const filterYear = filterValue.match(/\d{4}/)?.[0];
+                            if (!cellYear || !filterYear || cellYear === filterYear) {
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                });
                 return match;
             });
 
@@ -2675,15 +3309,46 @@ function buildAndDisplayPivotInCard(config, dataRows, cardId) {
         tableEl.innerHTML = renderPivotTableHTML(pivotResult, config);
     }
 
-    // Wire up add to dashboard button
+    // Wire up add to dashboard button (toggle functionality)
     if (addBtn) {
         addBtn.addEventListener('click', () => {
             const data = window.cardData[cardId];
-            if (data) {
-                addToDashboardFromCard(data.config, data.pivotResult);
+            if (!data) return;
+
+            // Check if already added
+            if (addBtn.dataset.dashboardChartId) {
+                // Remove from dashboard
+                const chartIdToRemove = addBtn.dataset.dashboardChartId;
+                removeDashboardChart(chartIdToRemove);
+                markCardAsRemovedFromDashboard(addBtn);
+                showAlert('Removed from dashboard', 'info');
+            } else {
+                // Add to dashboard
+                const dashboardChartId = addToDashboardFromCard(data.config, data.pivotResult);
+                markCardAsAddedToDashboard(addBtn, dashboardChartId);
             }
         });
     }
+}
+
+// Update button appearance after adding to dashboard
+function markCardAsAddedToDashboard(btn, dashboardChartId) {
+    if (!btn) return;
+
+    btn.innerHTML = '✓ Added';
+    btn.classList.remove('btn-pin');
+    btn.classList.add('btn-pin-added');
+    btn.dataset.dashboardChartId = dashboardChartId;
+}
+
+// Update button appearance after removing from dashboard
+function markCardAsRemovedFromDashboard(btn) {
+    if (!btn) return;
+
+    btn.innerHTML = '+ Dashboard';
+    btn.classList.remove('btn-pin-added');
+    btn.classList.add('btn-pin');
+    delete btn.dataset.dashboardChartId;
 }
 
 // Render chart in a specific card
@@ -2817,20 +3482,28 @@ function handleClearConversation() {
 }
 
 // Add to dashboard from a card
-function addToDashboardFromCard(config, pivotResult) {
+function addToDashboardFromCard(config, pivotResult, userQuery) {
     // Show dashboard section
     if (dashboardSection) {
         dashboardSection.classList.remove('hidden');
     }
 
-    // Create dashboard chart
-    createDashboardChart({
+    // Create dashboard chart and get its ID
+    const chartConfig = {
         ...config,
-        title: `${config.aggType === 'sum' ? 'Total' : config.aggType === 'avg' ? 'Average' : 'Count of'} ${config.valueField} by ${config.rowField}`,
         filters: currentFilters.map(f => ({ ...f }))
-    });
+    };
+    chartConfig.title = generateSmartChartTitle(chartConfig);
+    const chartId = createDashboardChart(chartConfig);
 
     showAlert('Added to dashboard!', 'success');
+
+    // Learn from this successful interaction (fire and forget)
+    const rowCount = pivotResult?.rowKeys?.length || filteredRows.length;
+    learnFromSuccess(userQuery || config.title, rowCount);
+
+    // Return chart ID for tracking
+    return chartId;
 }
 
 // Re-render all conversation cards with current filteredRows
@@ -3245,18 +3918,39 @@ async function showWelcomeMessage() {
     // Add initial assistant message
     const fileCount = new Set(allRows.map(r => r._file)).size;
     const sheetCount = new Set(allRows.map(r => r._sheetKey)).size;
+    const sheetNames = [...new Set(allRows.map(r => r._sheet))];
 
     let welcomeHtml = `<p>I've loaded your data: <strong>${allRows.length} rows</strong> from ${fileCount} file(s).</p>`;
+
+    // If multiple sheets, explain how they were combined
+    if (sheetCount > 1) {
+        welcomeHtml += `<p class="mt-2 text-sm"><span class="text-indigo-600 font-medium">📑 Combined ${sheetCount} sheets</span>: ${sheetNames.slice(0, 4).join(', ')}${sheetNames.length > 4 ? '...' : ''}</p>`;
+
+        // Check if we have Period/Month columns (indicates wide-to-long transform happened)
+        if (columnNames.includes('Period') && columnNames.includes('Month')) {
+            welcomeHtml += `<p class="text-xs text-gray-500 mt-1">Data was restructured for analysis - use "Month" or "Period" to compare across time.</p>`;
+        } else {
+            welcomeHtml += `<p class="text-xs text-gray-500 mt-1">All sheets combined. Use the sheet filter if you need to analyze separately.</p>`;
+        }
+    }
+
     welcomeHtml += `<p class="mt-2">Your columns are:</p><ul class="text-xs mt-1 space-y-0.5">`;
 
-    columnNames.slice(0, 8).forEach(col => {
+    // Prioritize showing key columns first
+    const priorityCols = ['Name', 'Period', 'Month', 'Role', 'Location'];
+    const sortedCols = [
+        ...columnNames.filter(c => priorityCols.includes(c)),
+        ...columnNames.filter(c => !priorityCols.includes(c))
+    ];
+
+    sortedCols.slice(0, 10).forEach(col => {
         const type = columnProfiles[col]?.type || 'text';
         const icon = type === 'numeric' ? '📊' : '📝';
         welcomeHtml += `<li>${icon} ${escapeHtml(col)} <span class="text-gray-400">(${type})</span></li>`;
     });
 
-    if (columnNames.length > 8) {
-        welcomeHtml += `<li class="text-gray-400">...and ${columnNames.length - 8} more</li>`;
+    if (columnNames.length > 10) {
+        welcomeHtml += `<li class="text-gray-400">...and ${columnNames.length - 10} more</li>`;
     }
     welcomeHtml += `</ul>`;
 
@@ -3298,9 +3992,58 @@ async function showWelcomeMessage() {
         }
     } else {
         welcomeHtml += `<p class="mt-3">Ask me anything about your data! For example:</p>`;
-        welcomeHtml += `<p class="text-xs text-gray-500 mt-1">"Show me a bar chart of sales by region"</p>`;
+
+        // Generate context-aware example queries
+        const exampleQueries = generateExampleQueries();
+        welcomeHtml += `<ul class="text-xs text-gray-500 mt-1 space-y-1">`;
+        exampleQueries.forEach(q => {
+            welcomeHtml += `<li>"${escapeHtml(q)}"</li>`;
+        });
+        welcomeHtml += `</ul>`;
+
         addChatMessage('assistant', welcomeHtml, true);
     }
+}
+
+// Generate example queries based on the data columns
+function generateExampleQueries() {
+    const queries = [];
+
+    // Find numeric and text columns
+    const numericCols = columnNames.filter(c => columnProfiles[c]?.type === 'numeric');
+    const textCols = columnNames.filter(c => columnProfiles[c]?.type === 'text' && !c.startsWith('_'));
+
+    // Check for specific patterns
+    const hasName = columnNames.some(c => c.toLowerCase().includes('name'));
+    const hasRole = columnNames.some(c => c.toLowerCase().includes('role'));
+    const hasPeriod = columnNames.includes('Period');
+    const hasMonth = columnNames.includes('Month');
+    const hasHours = numericCols.some(c => c.toLowerCase().includes('hour'));
+    const hasUtilization = numericCols.some(c => c.toLowerCase().includes('utilization'));
+
+    // Generate relevant examples
+    if (hasHours && hasName) {
+        queries.push(`Show total hours by ${columnNames.find(c => c.toLowerCase().includes('name')) || 'Name'}`);
+    }
+    if (hasUtilization && hasRole) {
+        queries.push(`Average utilization by ${columnNames.find(c => c.toLowerCase().includes('role')) || 'Role'}`);
+    }
+    if (hasHours && hasPeriod) {
+        queries.push('Compare hours across weeks');
+    }
+    if (hasMonth && numericCols.length > 0) {
+        queries.push(`Show ${numericCols[0]} by Month`);
+    }
+
+    // Fallback examples
+    if (queries.length === 0) {
+        if (numericCols.length > 0 && textCols.length > 0) {
+            queries.push(`Show ${numericCols[0]} by ${textCols[0]}`);
+        }
+        queries.push('Show me a summary of the data');
+    }
+
+    return queries.slice(0, 3);
 }
 
 // Add a message to the chat
@@ -3491,6 +4234,9 @@ function createDashboardChart(config) {
     requestAnimationFrame(() => {
         setTimeout(() => renderDashboardChart(chartId), 100);
     });
+
+    // Return the chart ID so callers can track it
+    return chartId;
 }
 
 // Update an existing chart
@@ -3646,6 +4392,24 @@ function renderChartsGrid() {
                 renderDashboardChart(chart.id);
             });
         }
+
+        // Add click handler for slideshow in presentation mode
+        card.addEventListener('click', (e) => {
+            // Don't trigger if clicking on controls
+            if (e.target.closest('.chart-card-actions') ||
+                e.target.closest('select') ||
+                e.target.closest('input') ||
+                e.target.closest('button')) {
+                return;
+            }
+
+            if (isPresentationMode && typeof openSlideshow === 'function') {
+                const chartIndex = dashboardCharts.findIndex(c => c.id === chart.id);
+                if (chartIndex !== -1) {
+                    openSlideshow(chartIndex);
+                }
+            }
+        });
     });
 }
 
@@ -3902,24 +4666,67 @@ function renderDashboardSummary(data) {
     }
 }
 
-// Populate dashboard filter dropdowns
+// Populate dashboard filter dropdowns dynamically based on actual data
 function populateDashboardFilters() {
     const data = allRows;
     if (!data || data.length === 0) return;
 
-    // Find relevant columns
-    const quarterCol = columnNames.find(c => c.endsWith('_Quarter'));
-    const monthCol = columnNames.find(c => c.endsWith('_Month'));
-    const productCol = columnNames.find(c => /product|item/i.test(c));
-    const salespersonCol = columnNames.find(c => /salesperson|sales.?person|rep/i.test(c));
-    const regionCol = columnNames.find(c => /region|location|area/i.test(c));
+    // Use pattern recognition to categorize columns
+    const columnCategories = {
+        time: [],      // Month, Quarter, Period, Date
+        person: [],    // Name, Employee, etc.
+        role: [],      // Role, Title, Position
+        location: [],  // Location, Region, City
+        category: []   // Any other categorical column
+    };
+
+    // Categorize columns using semantic detection
+    columnNames.forEach(col => {
+        // Skip internal columns and numeric-only columns
+        if (col.startsWith('_')) return;
+
+        const colLower = col.toLowerCase();
+        const profile = columnProfiles[col];
+
+        // Skip numeric columns (not good for filters)
+        if (profile && profile.type === 'number' && !colLower.includes('month') && !colLower.includes('quarter')) {
+            return;
+        }
+
+        // Categorize based on name patterns
+        if (col.endsWith('_Month') || col.endsWith('_Quarter') || /^(month|quarter|period)$/i.test(col)) {
+            columnCategories.time.push(col);
+        } else if (/^(name|employee|person|staff|member|user)$/i.test(col) || colLower === 'name') {
+            columnCategories.person.push(col);
+        } else if (/role|title|position|job|function|designation/i.test(col)) {
+            columnCategories.role.push(col);
+        } else if (/location|region|city|state|country|office|site|area|branch/i.test(col)) {
+            columnCategories.location.push(col);
+        } else if (profile && profile.type === 'string' && profile.uniqueCount && profile.uniqueCount <= 20) {
+            // Good categorical column - limited unique values
+            columnCategories.category.push(col);
+        }
+    });
+
+    console.log('[Dashboard Filters] Column categories:', columnCategories);
 
     // Helper to populate a select
-    function populateSelect(selectEl, colName, placeholder) {
-        if (!selectEl || !colName) return;
+    function populateSelect(selectEl, colName, placeholder, label, labelId) {
+        if (!selectEl) return;
 
-        const uniqueValues = [...new Set(data.map(r => r[colName]).filter(v => v))].sort();
-        selectEl.innerHTML = `<option value="">${placeholder}</option>`;
+        if (!colName) {
+            // Hide the filter if no matching column
+            selectEl.closest('.filter-group')?.classList.add('hidden');
+            selectEl.innerHTML = `<option value="">${placeholder}</option>`;
+            selectEl.dataset.column = '';
+            return;
+        }
+
+        // Show the filter
+        selectEl.closest('.filter-group')?.classList.remove('hidden');
+
+        const uniqueValues = [...new Set(data.map(r => r[colName]).filter(v => v != null && v !== ''))].sort();
+        selectEl.innerHTML = `<option value="">All ${label}</option>`;
         uniqueValues.forEach(val => {
             const option = document.createElement('option');
             option.value = val;
@@ -3929,13 +4736,37 @@ function populateDashboardFilters() {
 
         // Store the column name as data attribute for filtering
         selectEl.dataset.column = colName;
+
+        // Update the label element
+        if (labelId) {
+            const labelEl = document.getElementById(labelId);
+            if (labelEl) {
+                labelEl.textContent = label;
+            }
+        }
     }
 
-    populateSelect(filterQuarter, quarterCol, 'All Quarters');
-    populateSelect(filterMonth, monthCol, 'All Months');
-    populateSelect(filterProduct, productCol, 'All Products');
-    populateSelect(filterSalesperson, salespersonCol, 'All Salespersons');
-    populateSelect(filterRegion, regionCol, 'All Regions');
+    // Pick best columns for each filter slot
+    const quarterCol = columnCategories.time.find(c => c.endsWith('_Quarter'));
+    const monthCol = columnCategories.time.find(c => c.endsWith('_Month')) ||
+                     columnCategories.time.find(c => /month/i.test(c));
+
+    // For person/product/salesperson/region, use actual data columns
+    const personCol = columnCategories.person[0] || columnCategories.category.find(c => /name/i.test(c));
+    const roleCol = columnCategories.role[0];
+    const locationCol = columnCategories.location[0];
+
+    // Populate filters dynamically with label IDs
+    populateSelect(filterQuarter, quarterCol, 'All Quarters', 'Quarter', 'label-quarter');
+    populateSelect(filterMonth, monthCol, 'All Months', 'Month', 'label-month');
+
+    // Repurpose the generic filter slots for actual data columns
+    // filterProduct -> Person/Name
+    // filterSalesperson -> Role
+    // filterRegion -> Location
+    populateSelect(filterProduct, personCol, 'All Names', personCol || 'Name', 'label-product');
+    populateSelect(filterSalesperson, roleCol, 'All Roles', roleCol || 'Role', 'label-salesperson');
+    populateSelect(filterRegion, locationCol, 'All Locations', locationCol || 'Location', 'label-region');
 }
 
 // Handle dashboard filter change
@@ -4103,22 +4934,171 @@ function togglePresentationMode() {
     applyModeLayout();
 }
 
+// =============================================
+// SMART SLICER SELECTION
+// Intelligently picks the best columns for filtering
+// =============================================
+
+function selectSmartSlicers(columns, profiles, data) {
+    // Categories of column types (by semantic meaning)
+    const columnCategories = {
+        person: ['name', 'employee', 'person', 'user', 'staff', 'member', 'salesperson', 'rep'],
+        role: ['role', 'title', 'position', 'job', 'function'],
+        location: ['location', 'region', 'city', 'state', 'country', 'office', 'site', 'area'],
+        time: ['month', 'period', 'week', 'quarter', 'year', 'date', 'time'],
+        category: ['category', 'type', 'group', 'class', 'segment', 'department', 'division'],
+        product: ['product', 'item', 'sku', 'service'],
+        status: ['status', 'stage', 'phase', 'priority']
+    };
+
+    // Score each column
+    const scoredColumns = columns.map(col => {
+        const profile = profiles[col];
+        const colLower = col.toLowerCase();
+
+        // Skip if not text or too many/few unique values
+        if (!profile || profile.type !== 'text') return null;
+        if (profile.uniqueCount > 50 || profile.uniqueCount < 2) return null;
+
+        // Skip derived/duplicate columns
+        if (colLower.includes('_month') || colLower.includes('_quarter') ||
+            colLower.includes('_year') || colLower.includes('_formatted') ||
+            colLower.includes('_day') || colLower.startsWith('_')) return null;
+
+        // Determine category
+        let category = 'other';
+        let priorityScore = 50; // Default score
+
+        for (const [cat, keywords] of Object.entries(columnCategories)) {
+            if (keywords.some(kw => colLower.includes(kw))) {
+                category = cat;
+                break;
+            }
+        }
+
+        // Assign priority scores (lower = better)
+        const categoryPriority = {
+            role: 10,
+            person: 15,
+            location: 20,
+            category: 25,
+            product: 30,
+            time: 35,
+            status: 40,
+            other: 50
+        };
+        priorityScore = categoryPriority[category] || 50;
+
+        // Bonus for "clean" column names (not auto-generated)
+        if (!col.includes('_') && col.length < 20) priorityScore -= 5;
+
+        // Penalty for columns with very few unique values (might be less useful)
+        if (profile.uniqueCount <= 2) priorityScore += 10;
+
+        return { col, category, priorityScore, uniqueCount: profile.uniqueCount };
+    }).filter(Boolean);
+
+    // Group by category and pick best from each
+    const selectedByCategory = {};
+    const selected = [];
+
+    // Sort by priority
+    scoredColumns.sort((a, b) => a.priorityScore - b.priorityScore);
+
+    for (const item of scoredColumns) {
+        // Only allow one column per category (avoid Month, Month_Month, Month_Formatted)
+        if (!selectedByCategory[item.category]) {
+            selectedByCategory[item.category] = item.col;
+            selected.push(item.col);
+        }
+
+        // Max 5 slicers
+        if (selected.length >= 5) break;
+    }
+
+    return selected;
+}
+
+// =============================================
+// SMART CHART TITLES
+// Generate human-readable titles for charts
+// =============================================
+
+function generateSmartChartTitle(config) {
+    const { rowField, colField, valueField, aggType, filters, chartType } = config;
+
+    // Aggregation labels
+    const aggLabels = {
+        'sum': 'Total',
+        'avg': 'Average',
+        'count': 'Count of',
+        'min': 'Minimum',
+        'max': 'Maximum'
+    };
+
+    // Clean up field names for display
+    const cleanField = (field) => {
+        if (!field) return '';
+        return field
+            .replace(/_/g, ' ')
+            .replace(/([a-z])([A-Z])/g, '$1 $2') // camelCase to spaces
+            .replace(/\s+/g, ' ')
+            .trim();
+    };
+
+    // Build title parts
+    let title = '';
+    const aggLabel = aggLabels[aggType] || 'Sum of';
+    const valueLabel = cleanField(valueField) || 'Values';
+    const rowLabel = cleanField(rowField);
+    const colLabel = cleanField(colField);
+
+    // Single value display
+    if (chartType === 'number' || !rowField) {
+        title = `${aggLabel} ${valueLabel}`;
+    }
+    // Grouped chart
+    else if (rowField && colField) {
+        title = `${valueLabel} by ${rowLabel} and ${colLabel}`;
+    }
+    // Simple grouping
+    else if (rowField) {
+        title = `${valueLabel} by ${rowLabel}`;
+    }
+    else {
+        title = valueLabel;
+    }
+
+    // Add filter context if present
+    if (filters && filters.length > 0) {
+        const filterParts = filters.slice(0, 2).map(f => {
+            const vals = f.values || [f.value];
+            if (vals.length === 1) {
+                return `${cleanField(f.column)}: ${vals[0]}`;
+            }
+            return `${cleanField(f.column)}: ${vals.length} selected`;
+        });
+        if (filterParts.length > 0) {
+            title += ` (${filterParts.join(', ')})`;
+        }
+    }
+
+    return title;
+}
+
 // Populate slicer controls with categorical columns
 function populateSlicerControls() {
     slicerControls.innerHTML = '';
 
-    // Find categorical columns (non-numeric with reasonable unique values)
-    const categoricalColumns = columnNames.filter(col => {
-        const profile = columnProfiles[col];
-        return profile && profile.type === 'text' && profile.uniqueCount <= 50 && profile.uniqueCount > 1;
-    }).slice(0, 4); // Max 4 slicers
+    // Smart slicer selection - avoid duplicates and prioritize useful columns
+    const selectedSlicers = selectSmartSlicers(columnNames, columnProfiles, filteredRows);
 
-    if (categoricalColumns.length === 0) {
+    if (selectedSlicers.length === 0) {
         slicerControls.innerHTML = '<p class="text-gray-500 text-sm col-span-3">No categorical columns available for filtering.</p>';
         return;
     }
 
-    categoricalColumns.forEach(col => {
+    selectedSlicers.forEach(col => {
         const div = document.createElement('div');
 
         // Get unique values for this column
@@ -4248,6 +5228,14 @@ function clearAllSlicerFilters() {
 presentationModeBtn.addEventListener('click', togglePresentationMode);
 clearSlicerFiltersBtn.addEventListener('click', clearAllSlicerFilters);
 
+// Color theme selector
+const colorThemeSelect = document.getElementById('color-theme-select');
+if (colorThemeSelect) {
+    colorThemeSelect.addEventListener('change', (e) => {
+        setColorTheme(e.target.value);
+    });
+}
+
 // Handle browser back/forward buttons
 window.addEventListener('popstate', () => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -4257,6 +5245,367 @@ window.addEventListener('popstate', () => {
 
 // Initialize presentation mode detection on load
 detectPresentationMode();
+
+// ========================================
+// SLIDESHOW MODE (Full-screen chart viewer)
+// ========================================
+
+// Slideshow state
+let slideshowActive = false;
+let slideshowCurrentIndex = 0;
+let slideshowChartInstance = null;
+
+// Slideshow DOM elements
+const slideshowModal = document.getElementById('slideshow-modal');
+const slideshowExit = document.getElementById('slideshow-exit');
+const slideshowPrev = document.getElementById('slideshow-prev');
+const slideshowNext = document.getElementById('slideshow-next');
+const slideshowCounter = document.getElementById('slideshow-counter');
+const slideshowTitle = document.getElementById('slideshow-title');
+const slideshowCanvas = document.getElementById('slideshow-canvas');
+const slideshowThumbnails = document.getElementById('slideshow-thumbnails');
+const slideshowFilters = document.getElementById('slideshow-filters');
+const slideshowChartTitle = document.getElementById('slideshow-chart-title');
+const slideshowChartSubtitle = document.getElementById('slideshow-chart-subtitle');
+const slideshowActiveFilters = document.getElementById('slideshow-active-filters');
+const slideshowFilterTags = document.getElementById('slideshow-filter-tags');
+
+// Open slideshow at a specific chart index
+function openSlideshow(chartIndex = 0) {
+    if (!dashboardCharts || dashboardCharts.length === 0) {
+        console.warn('No charts to display in slideshow');
+        return;
+    }
+
+    slideshowActive = true;
+    slideshowCurrentIndex = Math.max(0, Math.min(chartIndex, dashboardCharts.length - 1));
+
+    // Show modal
+    slideshowModal.classList.remove('hidden');
+
+    // Add/remove single-chart class for styling
+    if (dashboardCharts.length === 1) {
+        slideshowModal.classList.add('single-chart');
+    } else {
+        slideshowModal.classList.remove('single-chart');
+    }
+
+    // Clone filters to slideshow header
+    populateSlideshowFilters();
+
+    // Build thumbnail dots
+    buildSlideshowThumbnails();
+
+    // Render current chart
+    renderSlideshowChart();
+
+    // Prevent body scroll
+    document.body.style.overflow = 'hidden';
+}
+
+// Close slideshow
+function closeSlideshow() {
+    slideshowActive = false;
+
+    // Hide modal
+    slideshowModal.classList.add('hidden');
+
+    // Destroy chart instance
+    if (slideshowChartInstance) {
+        slideshowChartInstance.destroy();
+        slideshowChartInstance = null;
+    }
+
+    // Restore body scroll
+    document.body.style.overflow = '';
+}
+
+// Navigate to next chart
+function slideshowGoNext() {
+    if (dashboardCharts.length <= 1) return;
+    slideshowCurrentIndex = (slideshowCurrentIndex + 1) % dashboardCharts.length;
+    renderSlideshowChart();
+    updateSlideshowThumbnails();
+}
+
+// Navigate to previous chart
+function slideshowGoPrev() {
+    if (dashboardCharts.length <= 1) return;
+    slideshowCurrentIndex = (slideshowCurrentIndex - 1 + dashboardCharts.length) % dashboardCharts.length;
+    renderSlideshowChart();
+    updateSlideshowThumbnails();
+}
+
+// Navigate to specific chart
+function slideshowGoTo(index) {
+    if (index < 0 || index >= dashboardCharts.length) return;
+    slideshowCurrentIndex = index;
+    renderSlideshowChart();
+    updateSlideshowThumbnails();
+}
+
+// Build thumbnail dots
+function buildSlideshowThumbnails() {
+    if (!slideshowThumbnails) return;
+
+    slideshowThumbnails.innerHTML = dashboardCharts.map((chart, idx) => `
+        <div class="slideshow-dot ${idx === slideshowCurrentIndex ? 'active' : ''}"
+             data-index="${idx}"
+             title="${escapeHtml(chart.config.title || `Chart ${idx + 1}`)}">
+        </div>
+    `).join('');
+
+    // Add click handlers
+    slideshowThumbnails.querySelectorAll('.slideshow-dot').forEach(dot => {
+        dot.addEventListener('click', () => {
+            slideshowGoTo(parseInt(dot.dataset.index));
+        });
+    });
+}
+
+// Update thumbnail active state
+function updateSlideshowThumbnails() {
+    if (!slideshowThumbnails) return;
+
+    slideshowThumbnails.querySelectorAll('.slideshow-dot').forEach((dot, idx) => {
+        dot.classList.toggle('active', idx === slideshowCurrentIndex);
+    });
+}
+
+// Populate slideshow filters from slicer controls
+function populateSlideshowFilters() {
+    if (!slideshowFilters || !slicerControls) return;
+
+    // Clone the slicer controls
+    slideshowFilters.innerHTML = '';
+
+    const slicerSelects = slicerControls.querySelectorAll('select');
+    slicerSelects.forEach(select => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'flex items-center gap-1';
+
+        const label = document.createElement('span');
+        label.className = 'text-xs text-gray-500';
+        label.textContent = select.previousElementSibling?.textContent || '';
+
+        const clonedSelect = select.cloneNode(true);
+        clonedSelect.id = `slideshow-${select.id}`;
+
+        // Sync filter changes back to main slicer
+        clonedSelect.addEventListener('change', () => {
+            select.value = clonedSelect.value;
+            select.dispatchEvent(new Event('change'));
+            // Re-render current slideshow chart after filter change
+            setTimeout(() => renderSlideshowChart(), 100);
+        });
+
+        wrapper.appendChild(label);
+        wrapper.appendChild(clonedSelect);
+        slideshowFilters.appendChild(wrapper);
+    });
+}
+
+// Update the active filters display in slideshow
+function updateSlideshowFiltersDisplay(chartFilters) {
+    if (!slideshowActiveFilters || !slideshowFilterTags) return;
+
+    // Collect all active filters (global + chart-specific)
+    const allFilters = [];
+
+    // Add global slicer filters
+    Object.entries(globalSlicerFilters || {}).forEach(([col, val]) => {
+        if (val) {
+            allFilters.push(`${col}: ${val}`);
+        }
+    });
+
+    // Add chart-specific filters
+    if (chartFilters && chartFilters.length > 0) {
+        chartFilters.forEach(f => {
+            const values = f.values?.join(', ') || f.value || '';
+            if (values) {
+                allFilters.push(`${f.column}: ${values}`);
+            }
+        });
+    }
+
+    // Display or hide
+    if (allFilters.length > 0) {
+        slideshowFilterTags.textContent = allFilters.join(' • ');
+        slideshowActiveFilters.classList.remove('hidden');
+    } else {
+        slideshowActiveFilters.classList.add('hidden');
+    }
+}
+
+// Render the current slideshow chart
+function renderSlideshowChart() {
+    if (!slideshowCanvas || slideshowCurrentIndex >= dashboardCharts.length) return;
+
+    const chart = dashboardCharts[slideshowCurrentIndex];
+
+    // Update counter in header
+    if (slideshowCounter) {
+        slideshowCounter.textContent = `${slideshowCurrentIndex + 1} / ${dashboardCharts.length}`;
+    }
+
+    // Generate smart title if not already set
+    const smartTitle = chart.config.title || generateSmartChartTitle(chart.config);
+
+    // Update header title (short version)
+    if (slideshowTitle) {
+        slideshowTitle.textContent = smartTitle;
+    }
+
+    // Update chart card title (prominent)
+    if (slideshowChartTitle) {
+        slideshowChartTitle.textContent = smartTitle;
+    }
+
+    // Update chart card subtitle (technical details)
+    if (slideshowChartSubtitle) {
+        const aggLabel = chart.config.aggType === 'sum' ? 'Sum' : chart.config.aggType === 'avg' ? 'Average' : 'Count';
+        const groupBy = chart.config.rowField || 'All';
+        let subtitle = `${aggLabel} of ${chart.config.valueField || 'values'} by ${groupBy}`;
+        if (chart.config.colField) {
+            subtitle += ` and ${chart.config.colField}`;
+        }
+        slideshowChartSubtitle.textContent = subtitle;
+    }
+
+    // Update active filters display
+    updateSlideshowFiltersDisplay(chart.config.filters);
+
+    // Destroy previous chart
+    if (slideshowChartInstance) {
+        slideshowChartInstance.destroy();
+        slideshowChartInstance = null;
+    }
+
+    // Get filtered data
+    const dataToUse = getFilteredData();
+
+    // Create pivot
+    const pivotResult = pivot(
+        dataToUse,
+        chart.config.rowField,
+        chart.config.colField || '',
+        chart.config.valueField,
+        chart.config.aggType || 'sum'
+    );
+
+    if (!pivotResult || !pivotResult.rowKeys || pivotResult.rowKeys.length === 0) {
+        // Show no data message
+        const ctx = slideshowCanvas.getContext('2d');
+        ctx.clearRect(0, 0, slideshowCanvas.width, slideshowCanvas.height);
+        ctx.font = '16px sans-serif';
+        ctx.fillStyle = '#6b7280';
+        ctx.textAlign = 'center';
+        ctx.fillText('No data available for current filters', slideshowCanvas.width / 2, slideshowCanvas.height / 2);
+        return;
+    }
+
+    // Prepare chart config (prepareChartData returns full Chart.js config)
+    const chartConfig = prepareChartData(pivotResult, chart.config);
+    console.log('[Slideshow] Chart config prepared:', chartConfig);
+
+    // Create the chart
+    try {
+        // Override some options for slideshow display
+        if (chartConfig.options) {
+            chartConfig.options.responsive = true;
+            chartConfig.options.maintainAspectRatio = false;
+            if (chartConfig.options.plugins) {
+                chartConfig.options.plugins.legend = {
+                    ...chartConfig.options.plugins.legend,
+                    position: 'bottom',
+                    labels: {
+                        padding: 20,
+                        font: { size: 14 }
+                    }
+                };
+                chartConfig.options.plugins.title = { display: false };
+            }
+        }
+
+        slideshowChartInstance = new Chart(slideshowCanvas, chartConfig);
+        console.log('[Slideshow] Chart created successfully');
+    } catch (err) {
+        console.error('Error creating slideshow chart:', err);
+    }
+}
+
+// Add click handlers to chart cards in presentation mode
+function addChartCardClickHandlers() {
+    if (!chartsGrid) return;
+
+    chartsGrid.querySelectorAll('.chart-card').forEach((card, index) => {
+        // Only add click handler in presentation mode
+        card.addEventListener('click', (e) => {
+            // Don't trigger if clicking on controls
+            if (e.target.closest('.chart-card-actions') ||
+                e.target.closest('select') ||
+                e.target.closest('input') ||
+                e.target.closest('button')) {
+                return;
+            }
+
+            if (isPresentationMode) {
+                // Find the chart index from the card id
+                const chartId = card.id.replace('card-', '');
+                const chartIndex = dashboardCharts.findIndex(c => c.id === chartId);
+                if (chartIndex !== -1) {
+                    openSlideshow(chartIndex);
+                }
+            }
+        });
+    });
+}
+
+// Slideshow event listeners
+if (slideshowExit) {
+    slideshowExit.addEventListener('click', closeSlideshow);
+}
+
+if (slideshowPrev) {
+    slideshowPrev.addEventListener('click', slideshowGoPrev);
+}
+
+if (slideshowNext) {
+    slideshowNext.addEventListener('click', slideshowGoNext);
+}
+
+// Keyboard navigation for slideshow
+document.addEventListener('keydown', (e) => {
+    if (!slideshowActive) return;
+
+    switch (e.key) {
+        case 'Escape':
+            closeSlideshow();
+            break;
+        case 'ArrowLeft':
+            slideshowGoPrev();
+            break;
+        case 'ArrowRight':
+            slideshowGoNext();
+            break;
+        case 'Home':
+            slideshowGoTo(0);
+            break;
+        case 'End':
+            slideshowGoTo(dashboardCharts.length - 1);
+            break;
+    }
+});
+
+// Close slideshow on backdrop click
+if (slideshowModal) {
+    slideshowModal.addEventListener('click', (e) => {
+        if (e.target === slideshowModal) {
+            closeSlideshow();
+        }
+    });
+}
 
 // Analytics Handlers - Add to end of script.js
 
