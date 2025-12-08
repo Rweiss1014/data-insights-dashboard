@@ -211,14 +211,19 @@ Given a user's question and their data structure, extract:
 1. filters: Array of {column, value} - items to filter the data BY
 2. rowField: Column name to group by (x-axis). Set to null if user wants a single total.
 3. colField: Optional secondary grouping
-4. valueField: Numeric column to measure/aggregate
-5. aggType: "sum" (default for quantities), "avg" (for averages), "count" (for counting rows)
-6. chartType: "bar" (default), "line" (for trends over time), "pie" (for proportions/percentages/share/breakdown), "number" (for single value display)
+4. valueField: Primary numeric column to measure/aggregate (for single metric queries)
+5. valueFields: Array of column names when comparing MULTIPLE metrics (e.g., ["Available Hours", "Allocated Hours"])
+   - Use this when user says "X vs Y", "X and Y", "compare X to Y", "X compared to Y"
+   - Example: "available vs allocated hours" → valueFields: ["Available Hours", "Allocated Hours"]
+   - Example: "compare revenue and expenses" → valueFields: ["Revenue", "Expenses"]
+6. aggType: "sum" (default for quantities), "avg" (for averages), "count" (for counting rows)
+7. chartType: "bar" (default), "line" (for trends over time), "pie" (for proportions/percentages/share/breakdown), "number" (for single value display)
    - Use "pie" when user asks about: percent, percentage, proportion, share, breakdown by category, distribution
-7. timeGrouping: "month" or "quarter" - ONLY if user wants to GROUP by time periods (e.g., "by month", "by quarter")
-8. monthFilter: The specific month name if user asks about a specific month (e.g., "March")
-9. quarterFilter: The specific quarter if user asks about a specific quarter (e.g., "Q1", "Q2", "Q3", "Q4")
-10. singleValue: true if user wants ONE total number (no breakdown/grouping)
+   - For multi-metric comparisons (valueFields), prefer "bar" chart with grouped bars
+8. timeGrouping: "month" or "quarter" - ONLY if user wants to GROUP by time periods (e.g., "by month", "by quarter")
+9. monthFilter: The specific month name if user asks about a specific month (e.g., "March")
+10. quarterFilter: The specific quarter if user asks about a specific quarter (e.g., "Q1", "Q2", "Q3", "Q4")
+11. singleValue: true if user wants ONE total number (no breakdown/grouping)
 
 Available columns: ${JSON.stringify(columns)}
 Column types: ${JSON.stringify(columnTypes)}
@@ -334,12 +339,39 @@ Query: "what percent of total expenses is attributed to each category" or "break
 }
 (Note: percentage/proportion questions should use pie chart)
 
+Query: "available vs allocated hours by person" or "compare available and allocated hours"
+→ {
+  "filters": [],
+  "rowField": "Name",
+  "colField": "",
+  "valueField": null,
+  "valueFields": ["Available Hours", "Allocated Hours"],
+  "aggType": "sum",
+  "chartType": "bar",
+  "singleValue": false
+}
+(Note: "vs" or "and" between two metrics means use valueFields array to compare both)
+
+Query: "show revenue and costs by month"
+→ {
+  "filters": [],
+  "rowField": "Date",
+  "colField": "",
+  "valueField": null,
+  "valueFields": ["Revenue", "Costs"],
+  "aggType": "sum",
+  "chartType": "bar",
+  "timeGrouping": "month",
+  "singleValue": false
+}
+
 Return ONLY valid JSON (no markdown, no explanation):
 {
   "filters": [],
   "rowField": "Product",
   "colField": "",
   "valueField": "Quantity Sold",
+  "valueFields": null,
   "aggType": "sum",
   "chartType": "bar",
   "timeGrouping": null,

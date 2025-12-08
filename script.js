@@ -3027,11 +3027,17 @@ async function handleUserQuery() {
                 rowField: rowField,
                 colField: aiResult.colField || null,
                 valueField: aiResult.valueField || null,
+                valueFields: aiResult.valueFields || null, // For multi-metric comparisons
                 aggType: aiResult.aggType || 'sum',
                 filters: normalizedFilters,
                 chartType: aiResult.chartType || 'bar',
                 computedColumns: aiResult.computedColumns || null
             };
+
+            // If valueFields is provided but valueField is null, use first valueField as fallback
+            if (config.valueFields && config.valueFields.length > 0 && !config.valueField) {
+                config.valueField = config.valueFields[0];
+            }
         } catch (err) {
             console.warn('[Chat] AI interpretation failed, using fallback:', err);
             config = guessLayoutFromTextImproved(text, columnNames, filteredRows);
@@ -3239,6 +3245,12 @@ function buildAndDisplayPivotInCard(config, dataRows, cardId) {
         return;
     }
 
+    // Handle multi-metric comparison (valueFields array)
+    if (config.valueFields && config.valueFields.length > 1) {
+        buildMultiMetricChart(config, dataRows, cardId);
+        return;
+    }
+
     // Build pivot
     const pivotResult = pivot(dataRows, config.rowField, config.colField || '', config.valueField, config.aggType);
 
@@ -3382,6 +3394,133 @@ function renderChartInCard(cardId, pivotResult, config) {
     const ctx = canvas.getContext('2d');
     const chartData = prepareChartData(pivotResult, config);
     analysisCharts[cardId] = new Chart(ctx, chartData);
+}
+
+// Build chart comparing multiple metrics (e.g., Available vs Allocated Hours)
+function buildMultiMetricChart(config, dataRows, cardId) {
+    const explanationEl = document.getElementById(`${cardId}-explanation`);
+    const metaEl = document.getElementById(`${cardId}-meta`);
+    const chartContainer = document.getElementById(`${cardId}-chart-container`);
+    const chartTypeEl = document.getElementById(`${cardId}-chart-type`);
+    const addBtn = document.getElementById(`${cardId}-add-btn`);
+
+    const { rowField, valueFields, aggType } = config;
+
+    // Build a pivot for each metric
+    const pivotResults = {};
+    valueFields.forEach(vf => {
+        pivotResults[vf] = pivot(dataRows, rowField, '', vf, aggType);
+    });
+
+    // Get the row keys (should be same for all pivots)
+    const rowKeys = pivotResults[valueFields[0]].rowKeys || [];
+
+    // Explanation
+    if (explanationEl) {
+        const aggWord = aggType === 'sum' ? 'SUM' : aggType === 'avg' ? 'AVERAGE' : 'COUNT';
+        let text = `Comparing ${valueFields.join(' vs ')} by ${rowField}`;
+
+        if (config.filters && config.filters.length > 0) {
+            const filterDesc = config.filters.map(f => `${f.column} = ${f.values.join(', ')}`).join('; ');
+            text += ` (${filterDesc})`;
+        }
+
+        explanationEl.textContent = text;
+    }
+
+    // Meta
+    if (metaEl) {
+        metaEl.textContent = `${dataRows.length} rows, ${valueFields.length} metrics`;
+    }
+
+    // Render chart
+    if (chartContainer) {
+        const optimalHeight = calculateChartHeight(rowKeys.length, 'bar', false);
+        chartContainer.style.height = `${optimalHeight}px`;
+        chartContainer.innerHTML = `<canvas id="${cardId}-chart"></canvas>`;
+
+        const canvas = document.getElementById(`${cardId}-chart`);
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+
+            // Build datasets - one per metric
+            const colors = getThemeColors();
+            const datasets = valueFields.map((vf, idx) => {
+                const data = rowKeys.map(rk => {
+                    const val = pivotResults[vf].getValue(rk, null);
+                    return val || 0;
+                });
+
+                return {
+                    label: vf,
+                    data: data,
+                    backgroundColor: colors[idx % colors.length],
+                    borderColor: colors[idx % colors.length],
+                    borderWidth: 1
+                };
+            });
+
+            analysisCharts[cardId] = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: rowKeys.map(rk => String(rk)),
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.raw.toLocaleString()}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    // Store for dashboard pinning
+    if (!window.cardData) window.cardData = {};
+    window.cardData[cardId] = { config, pivotResults, dataRows, isMultiMetric: true };
+
+    // Enable add button
+    if (addBtn) {
+        addBtn.classList.remove('hidden');
+        addBtn.onclick = () => pinMultiMetricChart(cardId);
+    }
+}
+
+// Pin multi-metric chart to dashboard
+function pinMultiMetricChart(cardId) {
+    const data = window.cardData?.[cardId];
+    if (!data || !data.isMultiMetric) return;
+
+    const { config, dataRows } = data;
+    const chartId = `chart-${++chartIdCounter}`;
+
+    // Create dashboard chart entry
+    const dashboardChart = {
+        id: chartId,
+        config: { ...config },
+        dataRows: dataRows
+    };
+
+    dashboardCharts.push(dashboardChart);
+    renderDashboard();
+    showAlert('Chart added to dashboard!', 'success');
 }
 
 // Render pivot table as HTML string
@@ -4492,6 +4631,12 @@ function renderDashboardChart(chartId) {
         }
     }
 
+    // Handle multi-metric charts
+    if (chart.config.valueFields && chart.config.valueFields.length > 1) {
+        renderMultiMetricDashboardChart(chart, dataToUse, canvas, ctx);
+        return;
+    }
+
     // Build pivot
     console.log(`[Dashboard] Building pivot: rowField=${chart.config.rowField}, valueField=${chart.config.valueField}, aggType=${chart.config.aggType}`);
 
@@ -4553,6 +4698,75 @@ function renderDashboardChart(chartId) {
     } catch (err) {
         console.error(`[Dashboard] Error creating chart ${chartId}:`, err);
     }
+}
+
+// Render multi-metric chart on dashboard
+function renderMultiMetricDashboardChart(chart, dataToUse, canvas, ctx) {
+    const { rowField, valueFields, aggType } = chart.config;
+
+    // Destroy existing instance
+    if (chart.chartInstance) {
+        chart.chartInstance.destroy();
+    }
+
+    // Build a pivot for each metric
+    const pivotResults = {};
+    valueFields.forEach(vf => {
+        pivotResults[vf] = pivot(dataToUse, rowField, '', vf, aggType);
+    });
+
+    // Get row keys from first pivot
+    const rowKeys = pivotResults[valueFields[0]].rowKeys || [];
+
+    // Build datasets
+    const colors = getThemeColors();
+    const datasets = valueFields.map((vf, idx) => {
+        const data = rowKeys.map(rk => {
+            const val = pivotResults[vf].getValue(rk, null);
+            return val || 0;
+        });
+
+        return {
+            label: vf,
+            data: data,
+            backgroundColor: colors[idx % colors.length],
+            borderColor: colors[idx % colors.length],
+            borderWidth: 1
+        };
+    });
+
+    // Create chart
+    chart.chartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: rowKeys.map(rk => String(rk)),
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.dataset.label}: ${context.raw.toLocaleString()}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    console.log(`[Dashboard] Multi-metric chart rendered: ${valueFields.join(' vs ')} by ${rowField}`);
 }
 
 // Get data with global slicer filters applied
