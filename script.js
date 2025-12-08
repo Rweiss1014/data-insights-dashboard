@@ -3028,6 +3028,7 @@ async function handleUserQuery() {
                 colField: aiResult.colField || null,
                 valueField: aiResult.valueField || null,
                 valueFields: aiResult.valueFields || null, // For multi-metric comparisons
+                calculatedField: aiResult.calculatedField || null, // For ratios like utilization
                 aggType: aiResult.aggType || 'sum',
                 filters: normalizedFilters,
                 chartType: aiResult.chartType || 'bar',
@@ -3037,6 +3038,11 @@ async function handleUserQuery() {
             // If valueFields is provided but valueField is null, use first valueField as fallback
             if (config.valueFields && config.valueFields.length > 0 && !config.valueField) {
                 config.valueField = config.valueFields[0];
+            }
+
+            // If calculatedField is provided, set a placeholder valueField for validation
+            if (config.calculatedField && !config.valueField) {
+                config.valueField = '__calculated__';
             }
         } catch (err) {
             console.warn('[Chat] AI interpretation failed, using fallback:', err);
@@ -3248,6 +3254,12 @@ function buildAndDisplayPivotInCard(config, dataRows, cardId) {
     // Handle multi-metric comparison (valueFields array)
     if (config.valueFields && config.valueFields.length > 1) {
         buildMultiMetricChart(config, dataRows, cardId);
+        return;
+    }
+
+    // Handle calculated fields (like utilization = allocated/available)
+    if (config.calculatedField) {
+        buildCalculatedFieldChart(config, dataRows, cardId);
         return;
     }
 
@@ -3512,6 +3524,144 @@ function pinMultiMetricChart(cardId) {
     const chartId = `chart-${++chartIdCounter}`;
 
     // Create dashboard chart entry
+    const dashboardChart = {
+        id: chartId,
+        config: { ...config },
+        dataRows: dataRows
+    };
+
+    dashboardCharts.push(dashboardChart);
+    renderDashboard();
+    showAlert('Chart added to dashboard!', 'success');
+}
+
+// Build chart for calculated fields (like utilization = numerator/denominator)
+function buildCalculatedFieldChart(config, dataRows, cardId) {
+    const explanationEl = document.getElementById(`${cardId}-explanation`);
+    const metaEl = document.getElementById(`${cardId}-meta`);
+    const chartContainer = document.getElementById(`${cardId}-chart-container`);
+    const addBtn = document.getElementById(`${cardId}-add-btn`);
+
+    const { rowField, calculatedField, aggType } = config;
+    const { formula, numerator, denominator, asPercent } = calculatedField;
+
+    // Group data by rowField and calculate ratio for each group
+    const groupedData = {};
+    dataRows.forEach(row => {
+        const key = row[rowField] || 'Unknown';
+        if (!groupedData[key]) {
+            groupedData[key] = { numeratorSum: 0, denominatorSum: 0 };
+        }
+        groupedData[key].numeratorSum += parseFloat(row[numerator]) || 0;
+        groupedData[key].denominatorSum += parseFloat(row[denominator]) || 0;
+    });
+
+    // Calculate ratios
+    const labels = Object.keys(groupedData);
+    const values = labels.map(key => {
+        const { numeratorSum, denominatorSum } = groupedData[key];
+        if (denominatorSum === 0) return 0;
+        const ratio = numeratorSum / denominatorSum;
+        return asPercent ? ratio * 100 : ratio;
+    });
+
+    // Explanation
+    if (explanationEl) {
+        const metricName = asPercent ? 'Utilization %' : `${numerator} / ${denominator}`;
+        let text = `${metricName} by ${rowField}`;
+        if (config.filters && config.filters.length > 0) {
+            const filterDesc = config.filters.map(f => `${f.column} = ${f.values.join(', ')}`).join('; ');
+            text += ` (${filterDesc})`;
+        }
+        explanationEl.textContent = text;
+    }
+
+    // Meta
+    if (metaEl) {
+        metaEl.textContent = `${dataRows.length} rows, ${labels.length} groups`;
+    }
+
+    // Render chart
+    if (chartContainer) {
+        const optimalHeight = calculateChartHeight(labels.length, 'bar', false);
+        chartContainer.style.height = `${optimalHeight}px`;
+        chartContainer.innerHTML = `<canvas id="${cardId}-chart"></canvas>`;
+
+        const canvas = document.getElementById(`${cardId}-chart`);
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            const colors = getThemeColors();
+
+            analysisCharts[cardId] = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: asPercent ? 'Utilization %' : `${numerator}/${denominator}`,
+                        data: values,
+                        backgroundColor: colors[0],
+                        borderColor: colors[0],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const val = context.raw;
+                                    return asPercent
+                                        ? `${val.toFixed(1)}%`
+                                        : val.toFixed(2);
+                                }
+                            }
+                        },
+                        datalabels: {
+                            display: true,
+                            anchor: 'end',
+                            align: 'top',
+                            formatter: (value) => asPercent ? `${value.toFixed(1)}%` : value.toFixed(2),
+                            font: { size: 11 }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: asPercent ? Math.min(Math.max(...values) * 1.2, 100) : undefined,
+                            ticks: {
+                                callback: function(value) {
+                                    return asPercent ? `${value}%` : value;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    // Store for dashboard pinning
+    if (!window.cardData) window.cardData = {};
+    window.cardData[cardId] = { config, dataRows, isCalculated: true, labels, values };
+
+    // Enable add button
+    if (addBtn) {
+        addBtn.classList.remove('hidden');
+        addBtn.onclick = () => pinCalculatedChart(cardId);
+    }
+}
+
+// Pin calculated field chart to dashboard
+function pinCalculatedChart(cardId) {
+    const data = window.cardData?.[cardId];
+    if (!data || !data.isCalculated) return;
+
+    const { config, dataRows } = data;
+    const chartId = `chart-${++chartIdCounter}`;
+
     const dashboardChart = {
         id: chartId,
         config: { ...config },
@@ -4637,6 +4787,12 @@ function renderDashboardChart(chartId) {
         return;
     }
 
+    // Handle calculated fields (utilization, etc.)
+    if (chart.config.calculatedField) {
+        renderCalculatedDashboardChart(chart, dataToUse, canvas, ctx);
+        return;
+    }
+
     // Build pivot
     console.log(`[Dashboard] Building pivot: rowField=${chart.config.rowField}, valueField=${chart.config.valueField}, aggType=${chart.config.aggType}`);
 
@@ -4767,6 +4923,78 @@ function renderMultiMetricDashboardChart(chart, dataToUse, canvas, ctx) {
     });
 
     console.log(`[Dashboard] Multi-metric chart rendered: ${valueFields.join(' vs ')} by ${rowField}`);
+}
+
+// Render calculated field chart on dashboard
+function renderCalculatedDashboardChart(chart, dataToUse, canvas, ctx) {
+    const { rowField, calculatedField } = chart.config;
+    const { numerator, denominator, asPercent } = calculatedField;
+
+    // Destroy existing instance
+    if (chart.chartInstance) {
+        chart.chartInstance.destroy();
+    }
+
+    // Group data by rowField and calculate ratio
+    const groupedData = {};
+    dataToUse.forEach(row => {
+        const key = row[rowField] || 'Unknown';
+        if (!groupedData[key]) {
+            groupedData[key] = { numeratorSum: 0, denominatorSum: 0 };
+        }
+        groupedData[key].numeratorSum += parseFloat(row[numerator]) || 0;
+        groupedData[key].denominatorSum += parseFloat(row[denominator]) || 0;
+    });
+
+    const labels = Object.keys(groupedData);
+    const values = labels.map(key => {
+        const { numeratorSum, denominatorSum } = groupedData[key];
+        if (denominatorSum === 0) return 0;
+        const ratio = numeratorSum / denominatorSum;
+        return asPercent ? ratio * 100 : ratio;
+    });
+
+    const colors = getThemeColors();
+
+    chart.chartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: asPercent ? 'Utilization %' : `${numerator}/${denominator}`,
+                data: values,
+                backgroundColor: colors[0],
+                borderColor: colors[0],
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return asPercent ? `${context.raw.toFixed(1)}%` : context.raw.toFixed(2);
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return asPercent ? `${value}%` : value;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    console.log(`[Dashboard] Calculated chart rendered: ${numerator}/${denominator} by ${rowField}`);
 }
 
 // Get data with global slicer filters applied

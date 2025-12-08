@@ -193,8 +193,11 @@ CRITICAL RULES:
    - "compare all products" → filters: [], rowField: "Product"
 5. SYNONYMS - Map common terms to actual column names:
    - "capacity" = Available Hours (or similar column)
-   - "utilization" = Allocated Hours / Available Hours
    - "workload" = Allocated Hours
+6. CALCULATED METRICS - For ratios/percentages:
+   - "utilization" = requires calculatedField: { formula: "divide", numerator: "Allocated Hours", denominator: "Available Hours", asPercent: true }
+   - When user asks for utilization, set calculatedField with the formula, and set valueField to null
+   - The system will calculate (numerator / denominator) for each group
 6. SINGLE TOTAL (NO GROUPING):
    - "total for November", "what's the total", "sum of all sales" → set rowField: null and singleValue: true
    - When user wants ONE number (not broken down by anything), use singleValue: true
@@ -228,14 +231,18 @@ Given a user's question and their data structure, extract:
    - Use this when user says "X vs Y", "X and Y", "compare X to Y", "X compared to Y"
    - Example: "available vs allocated hours" → valueFields: ["Available Hours", "Allocated Hours"]
    - Example: "compare revenue and expenses" → valueFields: ["Revenue", "Expenses"]
-6. aggType: "sum" (default for quantities), "avg" (for averages), "count" (for counting rows)
-7. chartType: "bar" (default), "line" (for trends over time), "pie" (for proportions/percentages/share/breakdown), "number" (for single value display)
+6. calculatedField: For ratio/percentage calculations like utilization
+   - Use when user asks for "utilization", "efficiency", "rate", or any ratio between two columns
+   - Format: { "formula": "divide", "numerator": "Column1", "denominator": "Column2", "asPercent": true }
+   - When calculatedField is set, valueField should be null
+7. aggType: "sum" (default for quantities), "avg" (for averages), "count" (for counting rows)
+8. chartType: "bar" (default), "line" (for trends over time), "pie" (for proportions/percentages/share/breakdown), "number" (for single value display)
    - Use "pie" when user asks about: percent, percentage, proportion, share, breakdown by category, distribution
    - For multi-metric comparisons (valueFields), prefer "bar" chart with grouped bars
-8. timeGrouping: "month" or "quarter" - ONLY if user wants to GROUP by time periods (e.g., "by month", "by quarter")
-9. monthFilter: The specific month name if user asks about a specific month (e.g., "March")
-10. quarterFilter: The specific quarter if user asks about a specific quarter (e.g., "Q1", "Q2", "Q3", "Q4")
-11. singleValue: true if user wants ONE total number (no breakdown/grouping)
+9. timeGrouping: "month" or "quarter" - ONLY if user wants to GROUP by time periods (e.g., "by month", "by quarter")
+10. monthFilter: The specific month name if user asks about a specific month (e.g., "March")
+11. quarterFilter: The specific quarter if user asks about a specific quarter (e.g., "Q1", "Q2", "Q3", "Q4")
+12. singleValue: true if user wants ONE total number (no breakdown/grouping)
 
 Available columns: ${JSON.stringify(columns)}
 Column types: ${JSON.stringify(columnTypes)}
@@ -310,6 +317,29 @@ Query: "hours per person" or "workload by name"
   "chartType": "bar"
 }
 (Note: "per person" = group by Name/Person column, no filter!)
+
+Query: "utilization per week" or "utilization by period"
+→ {
+  "filters": [],
+  "rowField": "Period",
+  "colField": "",
+  "valueField": null,
+  "calculatedField": { "formula": "divide", "numerator": "Allocated Hours", "denominator": "Available Hours", "asPercent": true },
+  "aggType": "sum",
+  "chartType": "bar"
+}
+(Note: utilization = Allocated/Available as percentage. Look for Period/Week column to group by.)
+
+Query: "utilization per role" or "show utilization by role"
+→ {
+  "filters": [],
+  "rowField": "Role",
+  "colField": "",
+  "valueField": null,
+  "calculatedField": { "formula": "divide", "numerator": "Allocated Hours", "denominator": "Available Hours", "asPercent": true },
+  "aggType": "sum",
+  "chartType": "bar"
+}
 
 Query: "which salesperson has the highest quantity sold in the first quarter"
 → {
